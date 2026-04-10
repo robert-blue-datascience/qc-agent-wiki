@@ -3,7 +3,7 @@
 
 title: QC Automation Agent
 description: Automated quality control for drilling data platforms
-theme: just-the-docs
+remote_theme: just-the-docs/just-the-docs
 
 url: "https://robert-blue-datascience.github.io"
 baseurl: "/qc-agent-wiki"
