@@ -3,7 +3,7 @@
 
 title: QC Automation Agent
 description: Automated quality control for drilling data platforms
-remote_theme: just-the-docs
+remote_theme: just-the-docs/just-the-docs
 
 url: "https://qcagent.dev"
 baseurl: ""
@@ -50,3 +50,8 @@ exclude:
   - "CONTENT_MAP.md"
   - ".archive/"
   - "Gemfile.lock"
+
+# Plugins
+plugins:
+  - jekyll-seo-tag
+  - jekyll-remote-theme
