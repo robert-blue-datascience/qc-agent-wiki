@@ -26,7 +26,7 @@ jobs:
         with:
           ruby-version: '3.2'
           bundler-cache: true
-      - run: bundle exec jekyll build --baseurl "${{ steps.pages.outputs.base_path }}"
+      - run: bundle exec jekyll build
       - uses: actions/upload-pages-artifact@v3
 
   deploy:
