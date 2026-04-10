@@ -51,3 +51,8 @@ exclude:
   - "CONTENT_MAP.md"
   - ".archive/"
   - "Gemfile.lock"
+
+# Plugins
+plugins:
+  - jekyll-seo-tag
+  - jekyll-remote-theme
