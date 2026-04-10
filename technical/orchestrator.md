@@ -9,7 +9,7 @@ nav_order: 4
 
 The orchestrator is the control center of the QC Agent. It sequences the 29 QC checks for every well in the input CSV, routes data through the API layer, feeds results into the rule engine, and triggers reporting and Monday.com publishing. For a non-technical overview of the full workflow, see [How It Works](../how-it-works). For the four-layer design and how the orchestrator relates to the API and rules layers, see [Architecture](architecture).
 
-Last updated: 2026-04-07
+Last updated: 2026-04-10
 
 ---
 
@@ -122,7 +122,7 @@ The browser era had a `browser_dead` flag because a Playwright crash corrupted a
 | `check_queue` | `list[dict]` | `initialize_run_node`; consumed by `process_check_node` | Ordered list of YAML check configs to run |
 | `full_check_queue` | `list[dict]` | `initialize_run_node` | Unfiltered check queue; used by `generate_report_node` for coverage calculations |
 | `checks_queued` | `int` | `initialize_run_node` | Total checks in queue after `--checks` filtering; used by report |
-| `current_check` | `dict \| None` | `process_check_node` | YAML config of the check most recently evaluated |
+| `current_check` | `dict \| None` | (unused since v0.8.0) | Field retained in TypedDict but no longer written; `process_check_node` now returns all results at once. Reads return a stale value from the prior well. |
 | `current_module_key` | `str \| None` | `save_well_results_node` | Reset to `None` between wells |
 | `check_results` | `dict[str, dict]` | `process_check_node` | Map of `check_name -> result_dict`; cleared between wells |
 | `run_id` | `str` | `initialize_run_node` | UUID for the run; written to report |
@@ -130,9 +130,9 @@ The browser era had a `browser_dead` flag because a Playwright crash corrupted a
 | `run_dir` | `str` | `initialize_run_node` | Output directory path (e.g., `runs/20260407_Acme_Oil/`) |
 | `well_start_time` | `float \| None` | `select_well_node` | `time.time()` when the current well started; cleared by `save_well_results_node` |
 | `run_start_time` | `float \| None` | `load_csv_node` | `time.time()` when the run started; used for total duration |
-| `login_success` | `bool` | Legacy field | No longer written; retained for schema compatibility |
+| `login_success` | `bool` | (removed) | No longer written; browser login path removed in v0.7.0 |
 | `well_found` | `bool` | `select_well_node` | Controls routing after `select_well` |
-| `browser_dead` | `bool` | Legacy field | No longer written; browser layer removed in v0.7.0 |
+| `browser_dead` | `bool` | (removed) | No longer written; browser layer removed in v0.7.0 |
 | `no_publish` | `bool` | `run()` entry | If `True`, `publish_results_node` skips Monday.com |
 | `force_publish` | `bool` | `run()` entry | If `True`, bypasses delta detection in `MondayClient` |
 | `errors` | `list[dict]` | `initialize_run_node` | Non-fatal error accumulator; written to report |
@@ -196,21 +196,36 @@ Pops the first well from `well_queue` and resolves its platform UUID from the AP
 
 ### Node 5: `process_check_node`
 
-The core evaluation loop. On each invocation, pops the first item from `check_queue` and runs it through `_process_check_api`. After evaluation, the result is stored in `check_results` and the check is removed from the queue. The routing function loops this node until the queue is empty.
+The concurrent evaluation node (v0.8.0+). On each invocation, processes all checks in `check_queue` in a single call using a two-wave parallel gather pattern. The routing function invokes this node once per well; the node returns when all checks are complete.
 
-`_process_check_api` steps:
+**Two-wave execution:**
+
+`_split_into_waves` divides `check_queue` into wave 1 (no dependencies) and wave 2 (checks that depend on a wave 1 result). Wave 1 runs first via `asyncio.gather`; wave 2 begins only after all wave 1 results are available.
+
+Each check runs through `_run_single_check`, which calls `_fetch_and_evaluate` wrapped in `asyncio.wait_for(timeout=check_timeout_seconds)`.
+
+**`_fetch_and_evaluate` steps:**
 1. Look up `strategy` in `API_STRATEGY_MAP`. Unknown strategy logs `UNKNOWN_API_STRATEGY` and returns `INCONCLUSIVE`.
-2. For each `(method_name, arg_type)` in the entry's `fetch` list, fetch from the API or serve from `resource_cache`.
+2. For each `(method_name, arg_type)` in the fetch list, fetch from the API or serve from `resource_cache` via `_coalesced_fetch`.
 3. Call the adapter function with all fetched responses plus any `strategy_params`.
-4. Inject `basin` into `extracted_data`.
-5. Call `engine.evaluate(check_name, extracted_data)`.
-6. Convert `CheckResult` to a serializable dict and append to `check_results`.
+4. Inject `basin` and `system_time` into `extracted_data`.
+5. Call `engine.evaluate(check_name, extracted_data)` (synchronous).
 
-Any exception in steps 2-5 is caught and produces an `INCONCLUSIVE` result for that check. The run continues.
+Any exception produces `INCONCLUSIVE` for that check. The remaining checks are not affected.
 
-- **Reads**: `check_queue`, `check_results`, `well_uuid`, `basin`
-- **Writes**: `check_queue` (shorter by one), `current_check`, `check_results`
-- **Errors**: caught; all errors return `INCONCLUSIVE` for the affected check only
+**Concurrency control:** `asyncio.Semaphore(semaphore_size)` caps the number of checks running simultaneously. Default `semaphore_size=8` from `config/agent.yaml`.
+
+**Request coalescing:** When two checks need the same API endpoint, only one fetch goes to the network. The second caller waits on a per-endpoint `asyncio.Lock` and reads from `resource_cache` when the first caller completes. The `_FETCH_FAILED` sentinel in the cache distinguishes a failed fetch from a cache miss.
+
+**Wave 2 dependency resolution:** Before each wave 2 check executes, the accumulated results are inspected. If the dependency result is `INCONCLUSIVE`, the dependent check inherits `INCONCLUSIVE` without making any API call. If the dependency condition is met (e.g., Surveys = NO triggers N_A for Survey Corrections), the engine computes the N_A result with an empty `extracted_data` dict.
+
+**Per-well circuit breaker:** `_CircuitBreakerState` tracks consecutive and total timeouts within a single well. When `consecutive_timeout_limit` or `total_timeout_limit` is reached, remaining checks are skipped and `circuit_breaker_aborted=True` is returned. The consecutive count resets on any successful check.
+
+**Run-level circuit breaker:** The injected `run_cb_state` tracks consecutive aborted wells across the full run. When `consecutive_well_abort_limit` is exceeded, `well_queue` is drained to stop the run. (Architectural note: draining `well_queue` from within a check-execution node is a known design smell tracked in TASKS.md v0.8.1 for refactor into a dedicated routing flag.)
+
+- **Reads**: `check_queue`, `check_results`, `well_uuid`, `basin`, `well_queue`
+- **Writes**: `check_queue` (emptied), `check_results` (all checks), `circuit_breaker_aborted`, and potentially `well_queue` (drained on run-level trip)
+- **Errors**: all exceptions produce `INCONCLUSIVE` for the affected check; timeouts increment circuit breaker counters
 
 ---
 
@@ -315,7 +330,7 @@ If a YAML config references a strategy name not in `API_STRATEGY_MAP`, `_process
 
 | Strategy | Checks | Primary fetch method | Adapter |
 |---|---|---|---|
-| `witsml_connected` | 1 | `get_witsml_link` | `adapt_witsml_connected` |
+| `witsml_connected` | 1 | `get_well_detail` (cached from well selection) | `adapt_witsml_status` |
 | `surveys` | 2 | `get_surveys`, `get_well_detail` | `adapt_surveys` |
 | `survey_program` | 3 | `get_survey_program` | `adapt_presence_check` |
 | `survey_corrections` | 4 | `get_surveys` | `adapt_survey_corrections` |
@@ -391,7 +406,7 @@ Duplicate `(well_name, operator)` pairs generate a warning and the second occurr
 |---|---|
 | **#1 Client data safety** (no cross-operator mixing) | `save_well_results_node`: `resource_cache.clear()` between wells; `completed_wells` accumulates only current operator's wells; `run_all()` invokes the graph once per operator |
 | **#2 Platform safety** (read-only, rate-limited) | All API calls are GET or read-only POST; rate limiter applied via `APIClient`; no write operations anywhere in the orchestrator |
-| **#3 Accuracy** (deterministic, INCONCLUSIVE not guessed) | All evaluation via `engine.evaluate()`; API failures return `INCONCLUSIVE` not a guess; `_dependency_resolves()` prevents a skipped check from evaluating against unresolved data |
+| **#3 Accuracy** (deterministic, INCONCLUSIVE not guessed) | All evaluation via `engine.evaluate()`; API failures and timeouts return `INCONCLUSIVE` not a guess; wave 2 dependency check prevents evaluation against INCONCLUSIVE dependency results |
 | **#4 Completeness** (every well, every check) | `well_queue` exhausted before `generate_report`; unreachable wells tracked in `unreachable_wells`; coverage stats written to report |
 | **#5 Transparency** (every action logged) | `security_gate_node`, `load_csv_node`, `initialize_run_node`, `select_well_node`, `process_check_node`, and `save_well_results_node` all produce audit log events at every decision point; all API failures logged before `INCONCLUSIVE` is returned |
 

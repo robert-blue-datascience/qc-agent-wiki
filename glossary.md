@@ -34,6 +34,9 @@ The collection of tools attached to the bottom of the drill string, including th
 
 ## C
 
+**Circuit Breaker**
+A fault-tolerance mechanism that stops execution when repeated failures indicate a systemic problem. The agent uses two circuit breakers: a per-well breaker that skips remaining checks when too many checks time out in a single well, and a run-level breaker that halts the run when too many consecutive wells are aborted. Both prevent a slow or unavailable server from consuming the full run time without producing useful results.
+
 **Casing**
 Steel pipe cemented into the wellbore to maintain structural integrity and isolate different geological zones. Wells are typically drilled and cased in multiple stages (surface, intermediate, production).
 
@@ -47,6 +50,11 @@ The outcome of a single QC check. One of five values:
 - **PARTIAL** (0.5) -- Data is partially complete
 - **N/A** (excluded) -- Check does not apply to this well
 - **INCONCLUSIVE** (0.0) -- Agent could not determine the answer
+
+## C (continued)
+
+**Concurrent Execution**
+Running multiple tasks simultaneously rather than one after another. In v0.8.0, all 29 checks for a single well are dispatched at the same time and run in parallel (subject to a semaphore limit), rather than executing sequentially. The two-wave pattern ensures checks that depend on other checks' results still receive correct input.
 
 ## D
 
@@ -133,6 +141,9 @@ The weighted quality score computed for an operator based on the results of all 
 
 ## R
 
+**Request Coalescing**
+A technique where multiple concurrent callers that need the same resource share a single in-flight request. When two checks both need BHA list data, only the first triggers an API call; the second waits for that call to complete and then reads from the shared cache. This prevents redundant network calls without requiring callers to coordinate explicitly.
+
 **Rate Limiter**
 A safety mechanism that spaces the agent's requests to the cloud platform, preventing it from sending too many requests too quickly. The rate limiter ensures the agent is a respectful consumer of platform resources.
 
@@ -144,6 +155,9 @@ A structured file generated after each agent run containing every well checked, 
 
 ## S
 
+**Semaphore**
+A concurrency control mechanism that limits how many operations can run at the same time. The agent uses a semaphore to cap the number of simultaneously executing checks per well. A semaphore size of 8 means at most 8 checks run concurrently; the rest wait until a slot opens. This prevents the agent from overwhelming the API server with too many simultaneous requests.
+
 **Spud**
 The act of beginning to drill a well. "Spud date" is the date drilling commenced.
 
@@ -154,6 +168,9 @@ In the context of the agent's orchestration, state is the shared data structure 
 A measurement of the wellbore's position underground, typically recording inclination (angle from vertical) and azimuth (compass direction) at a specific measured depth. Surveys are taken at regular intervals during drilling to track the well's actual path.
 
 ## T
+
+**Two-Wave Execution**
+The pattern used by the agent's concurrent check execution. In wave 1, all checks with no dependencies run simultaneously. In wave 2, checks that depend on a wave 1 result run after wave 1 is complete and can inspect those results before deciding whether to execute or inherit a status (INCONCLUSIVE or N_A) from their dependency. This preserves the correctness of dependency chains while allowing maximum parallelism for independent checks.
 
 **Tool Inventory**
 A record of the drilling equipment assigned to a rig site, including drill pipe, measurement tools, motors, and other components.

@@ -3,15 +3,15 @@
 
 title: QC Automation Agent
 description: Automated quality control for drilling data platforms
-remote_theme: just-the-docs/just-the-docs
+theme: just-the-docs
 
-url: "https://qcagent.dev"
-baseurl: ""
+url: ""
+baseurl: "/qc-agent"
 
 # Navigation structure
 aux_links:
   "Repository":
-    - "https://github.com/robert-blue-datascience/qc-agent-wiki"
+    - "https://github.com/YOUR_ORG/qc-agent"
 
 # Footer
 footer_content: "QC Automation Agent &mdash; Program Wiki"
@@ -51,8 +51,3 @@ exclude:
   - "CONTENT_MAP.md"
   - ".archive/"
   - "Gemfile.lock"
-
-# Plugins
-plugins:
-  - jekyll-seo-tag
-  - jekyll-remote-theme

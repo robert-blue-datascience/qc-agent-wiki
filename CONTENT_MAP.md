@@ -102,15 +102,15 @@ Tracks which pages exist and are current. Updated by wiki-sweep.
 | checks/tool-inventory.md | Exists | 2026-04-07 |
 | checks/file-drive.md | Exists | 2026-04-07 |
 | scoring.md | Exists | 2026-04-07 |
-| results.md | Exists | 2026-04-07 |
+| results.md | Exists | 2026-04-10 |
 | trend-board.md | Exists (placeholder) | 2026-04-07 |
-| roadmap.md | Exists | 2026-04-07 |
-| glossary.md | Exists | 2026-04-07 |
+| roadmap.md | Exists | 2026-04-10 |
+| glossary.md | Exists | 2026-04-10 |
 | technical/index.md | Exists | 2026-04-07 |
 | technical/architecture.md | Exists | 2026-04-07 |
-| technical/api-layer.md | Exists | 2026-04-07 |
+| technical/api-layer.md | Exists | 2026-04-10 |
 | technical/rule-engine.md | Exists | 2026-04-07 |
-| technical/orchestrator.md | Exists | 2026-04-07 |
+| technical/orchestrator.md | Exists | 2026-04-10 |
 | technical/scoring-engine.md | Exists | 2026-04-07 |
-| technical/monday-integration.md | Exists | 2026-04-07 |
-| technical/guardrails.md | Exists | 2026-04-07 |
+| technical/monday-integration.md | Exists | 2026-04-10 |
+| technical/guardrails.md | Exists | 2026-04-10 |

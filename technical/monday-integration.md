@@ -9,7 +9,7 @@ nav_order: 6
 
 The Monday.com integration is the final step of every QC run: once all 29 checks have been evaluated and scores computed, the agent publishes those results to the live operations board that account managers and field staff use daily. It is the only place where QC data becomes visible outside the agent's local run directory. For a non-technical explanation of what those scores mean and how they are interpreted, see [Results and Impact](../results).
 
-Last updated: 2026-04-07
+Last updated: 2026-04-10
 
 ---
 
@@ -126,6 +126,28 @@ flowchart TD
 **Rationale:** Column IDs are Monday.com internal identifiers that could change if columns are renamed or the board is restructured. Externalizing them means a board change requires editing one YAML file, not hunting through source code. Injecting the config dict (rather than reading it in the constructor) keeps the client testable without a filesystem.
 
 **Alternative rejected:** Hardcoding column IDs as constants in `monday_client.py`. This would make board changes require code changes and re-deployment.
+
+---
+
+## Known Fixes (v0.8.0 -- 2026-04-09)
+
+Two bugs in `flag_stale_rigs` and the item rename path were corrected after the first production API run.
+
+### Stale rig detection was silently skipping all board items
+
+**Root cause:** `flag_stale_rigs` filtered board items by comparing the `operator` column to the current operator name. Monday.com connect-boards columns always return `null` for the `text` field when queried via the `items_page` GraphQL endpoint -- the value is never populated regardless of actual board content. Every item failed the operator filter, so no rigs were ever flagged as stale.
+
+**Fix:** The operator-scoped filter was removed. `flag_stale_rigs` now receives `all_active_rigs` -- the union of every rig across all operators in the full CSV -- and flags any board item whose rig name does not appear in that union. For `--well` and `--first` runs (where the full CSV is not loaded), stale flagging is skipped entirely to avoid false positives.
+
+**Second bug:** The status column ID in `monday_boards.yaml` was configured as `"status"` (invalid; Monday.com internal IDs are alphanumeric codes). Corrected to `"color_mkwrhcwa"`. The status label was also configured as `"Completed"` but the board only has `"Active"` and `"Complete"` as valid values. Corrected to `"Complete"`.
+
+---
+
+### Item rename used wrong GraphQL variable type
+
+**Root cause:** The rename mutation used `$value: JSON!` as the variable type. Monday.com's `change_simple_column_value` mutation requires `$value: String!`. Monday.com returns HTTP 200 with a GraphQL error body in this case, causing all retries to fail without raising an exception, silently leaving the well name stale on the board.
+
+**Fix:** Variable type changed to `String!`; value passed as a plain Python string rather than `json.dumps`. A regression test was added that inspects the exact mutation string and variable dict to prevent recurrence.
 
 ---
 

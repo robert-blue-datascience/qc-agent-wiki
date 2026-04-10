@@ -9,7 +9,7 @@ nav_order: 7
 
 The guardrails system is the security and observability foundation of the QC Automation Agent. It ensures every run is safe, auditable, and impossible to misconfigure in ways that could harm the platform, leak credentials, or produce silent incorrect results. For a non-technical overview of how the agent operates, see the [How It Works](../how-it-works) guide.
 
-Last updated: 2026-04-07
+Last updated: 2026-04-10
 
 ---
 
@@ -34,7 +34,7 @@ The diagram below shows where each guardrail file intercepts the agent's executi
 ```mermaid
 flowchart TD
     A["CLI Entry Point\norchestrator/graph.py"] --> B["security_gate.py\nrun_gate()\nBlocks on violation"]
-    B --> C["rate_limiter.py\nget_limiter() singleton\nPLATFORM + MONDAY buckets"]
+    B --> C["rate_limiter.py\nget_limiter() singleton\nMONDAY bucket"]
     C --> D["API Layer / Monday Client\nEvery outbound request\nacquires a token first"]
     D --> E["audit_logger.py\nAuditLogger.log()\nBuffer then file"]
     E --> F["log_sanitizer.py\nLogSanitizer.sanitize()\nEvery entry scrubbed"]
@@ -160,23 +160,24 @@ class GateResult:
 
 ```python
 class BucketType(str, Enum):
-    PLATFORM = "platform"   # API calls to cloud-api.aidriller.com
     MONDAY = "monday"       # GraphQL calls to api.monday.com
 ```
 
+The `PLATFORM` bucket was removed in v0.8.0. API call concurrency is now managed by a semaphore in the orchestrator (`semaphore_size` in `config/agent.yaml`). The MONDAY bucket remains for all Monday.com GraphQL calls.
+
 **`RateLimitConfig` dataclass** (with enforced floors and ceilings):
 
-| Parameter | Default | Floor | Ceiling |
-|---|---|---|---|
-| `min_page_delay_seconds` | 1.5s | 0.3s | -- |
-| `max_pages_per_minute` | 15 | -- | 20 |
-| `cooldown_between_operators_seconds` | 10s | 5s | -- |
-| `retry_backoff_initial_seconds` | 5s | 5s | -- |
-| `retry_backoff_max_seconds` | 120s | -- | -- |
-| `max_retries_per_action` | 5 | -- | 10 |
-| `monday_calls_per_minute` | 10 | -- | 30 |
+| Parameter | Default | Floor | Ceiling | Notes |
+|---|---|---|---|---|
+| `min_page_delay_seconds` | 1.5s | 0.3s | -- | Unused since v0.8.0 (PLATFORM bucket removed). Field retained for config compatibility; no runtime consumer. |
+| `max_pages_per_minute` | 15 | -- | 20 | |
+| `cooldown_between_operators_seconds` | 10s | 5s | -- | |
+| `retry_backoff_initial_seconds` | 5s | 5s | -- | |
+| `retry_backoff_max_seconds` | 120s | -- | -- | |
+| `max_retries_per_action` | 5 | -- | 10 | |
+| `monday_calls_per_minute` | 10 | -- | 30 | |
 
-The 0.3s floor on `min_page_delay_seconds` was lowered from 1.5s in v0.6.0 when the PLATFORM bucket shifted from browser page loads to lightweight API calls. Floor enforcement happens in `__post_init__` and logs a `rate_limiter.floor_enforced` warning if a value was clamped.
+Floor enforcement happens in `__post_init__` and logs a `rate_limiter.floor_enforced` warning if a value was clamped.
 
 **`RateLimiter` public interface:**
 

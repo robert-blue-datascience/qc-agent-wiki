@@ -9,7 +9,7 @@ nav_order: 1
 
 The API layer is the data retrieval engine for the QC Automation Agent. It is responsible for authenticating with the AI Driller Cloud platform, fetching well data across 25 endpoints, and translating raw JSON responses into the flat dictionaries the rule engine expects. For a non-technical explanation of what data the agent collects and why, see the [How It Works](../how-it-works) guide.
 
-Last updated: 2026-04-07
+Last updated: 2026-04-10
 
 ---
 
@@ -39,7 +39,6 @@ flowchart TD
     C --> E["cloud-api.aidriller.com"]
     C --> F["api/auth.py\nAPIAuth\nget_headers()"]
     F --> E
-    C --> G["guardrails/rate_limiter.py\nPLATFORM bucket\n300ms floor"]
     C --> H["guardrails/audit_logger.py\nEvery request logged"]
     F --> H
     D --> I["rules/checks/*.py\nEvaluation functions\nextracted_data dicts"]
@@ -50,7 +49,6 @@ flowchart TD
     style D fill:#e8a838,stroke:#b8842c,color:#fff
     style E fill:#5ba585,stroke:#3d7a5e,color:#fff
     style F fill:#5ba585,stroke:#3d7a5e,color:#fff
-    style G fill:#d96a4a,stroke:#a84e35,color:#fff
     style H fill:#d96a4a,stroke:#a84e35,color:#fff
     style I fill:#7b68ae,stroke:#5a4d82,color:#fff
 ```
@@ -144,7 +142,7 @@ Reads `ADC_USERNAME` and `ADC_PASSWORD` from `os.environ` at construction. Raise
 | `login` | `async login() -> None` | POSTs credentials to `/api/auth/login`, stores the JWT, registers it with `LogSanitizer` | Called automatically by `get_headers()`; rarely called directly | `httpx.HTTPStatusError` on 401/403; `httpx.RequestError` on network failure; `ValueError` if response has no `token` field |
 | `is_expired` | `is_expired() -> bool` | Local clock check against the JWT `exp` claim. No network call. | Called by `refresh_if_needed()` before every API call | Never raises; malformed token is treated as expired |
 | `refresh_if_needed` | `async refresh_if_needed() -> None` | Calls `login()` only if `is_expired()` is True | Called internally by `get_headers()` | Same as `login()` |
-| `get_headers` | `async get_headers() -> dict[str, str]` | Returns `{"Authorization": "<Bearer token>"}`, refreshing if needed. **This is the only method external callers should use.** | Called by `APIClient._make_request()` before every HTTP request | Same as `login()` if refresh is triggered |
+| `get_headers` | `async get_headers() -> dict[str, str]` | Returns `{"Authorization": "<Bearer token>"}`, refreshing if needed. Concurrent callers share a single `asyncio.Lock`; only one refresh runs at a time, others wait then read the updated token. **This is the only method external callers should use.** | Called by `APIClient._make_request()` before every HTTP request | Same as `login()` if refresh is triggered |
 
 **Internal: `_decode_jwt_exp()`**
 
@@ -184,14 +182,13 @@ The internal choke point. All 25 endpoint methods call this. Never called from o
 
 Execution sequence on every call:
 1. Call `self._auth.get_headers()` (transparently refreshes if needed)
-2. Acquire `BucketType.PLATFORM` rate limit token (300ms minimum delay)
-3. Execute `self._client.request(method, endpoint, headers=..., **kwargs)`
-4. On 4xx: log `API_REQUEST_FAILED` with `reason="client error"`, raise immediately (no retries)
-5. On 5xx or `httpx.RequestError`: log `API_REQUEST_RETRY`, backoff via `self._rate_limiter.backoff_seconds(attempt)`, retry
-6. On max retries exhausted: log `API_REQUEST_FAILED` with `reason="max retries exhausted"`, raise
-7. On 2xx: log `API_REQUEST_SUCCESS`, return `response.json()`
+2. Execute `self._client.request(method, endpoint, headers=..., **kwargs)`
+3. On 4xx: log `API_REQUEST_FAILED` with `reason="client error"`, raise immediately (no retries)
+4. On 5xx or `httpx.RequestError`: log `API_REQUEST_RETRY`, backoff via `self._rate_limiter.backoff_seconds(attempt)`, retry
+5. On max retries exhausted: log `API_REQUEST_FAILED` with `reason="max retries exhausted"`, raise
+6. On 2xx: log `API_REQUEST_SUCCESS`, return `response.json()`
 
-The rate limiter is acquired **before every attempt**, including retries. This ensures retries respect the platform rate limit, not just initial calls.
+The PLATFORM rate limit bucket was removed in v0.8.0. Concurrent API access is now controlled at the orchestrator level by a semaphore (`semaphore_size` in `config/agent.yaml`). `self._rate_limiter` is still injected and its retry configuration (`max_retries`, `backoff_seconds`) is used, but `acquire()` is no longer called on the API path. The MONDAY bucket remains active for Monday.com calls.
 
 ---
 
@@ -267,7 +264,7 @@ All adapter functions are pure functions. Every function takes one or two dicts 
 
 | Function | Check(s) | Signature | Returns | Notable behavior |
 |----------|----------|-----------|---------|-----------------|
-| `adapt_witsml_connected(api_response)` | 1 | `dict -> dict` | `{"header_timestamp": int \| None, "connected": bool \| None}` | Endpoint returns a bare dict (no `"data"` wrapper). `lastRun` is epoch ms integer or `null`. Orchestrator merges `basin` (from CSV) before passing to eval. |
+| `adapt_witsml_status(api_response)` | 1 | `dict -> dict` | `{"header_timestamp": int \| None}` | Uses `realtime` boolean from the well detail response (already cached during well selection). `realtime=True` returns current epoch ms; `realtime=False` returns epoch 0. The broken `/api/integration/well_link` endpoint is not used. |
 | `adapt_surveys(surveys_response, well_detail_response)` | 2 | `(dict, dict) -> dict` | `{"data_present": bool \| None, "point_source_desc": list[str], "last_md": str, "current_depth": str}` | Two-response adapter. Extracts last 5 `point_source_desc` values and last `md`. `current_depth` comes from well detail `end_depth`. |
 | `adapt_survey_corrections(surveys_response)` | 4 | `dict -> dict` | `{"point_source_desc": list[str] \| None}` | Returns ALL point sources (not last 5). Eval filters for manual corrections. |
 | `adapt_geosteering(api_response)` | 5 | `dict -> dict` | `{"button_text": str \| None}` | Synthesizes the legacy browser button label from `linked_interpretation_id` and `linked_interpretation_name`. If `linked_id` is not `None`, returns `"Connected to {name}"`. Otherwise `"Connect to Geosteering"`. Tech debt: ideally the eval would read structured fields directly. |
@@ -382,7 +379,7 @@ These are inconsistencies in the AI Driller Cloud API that differ from the stand
 | # | Rule | How this module enforces it |
 |---|------|-----------------------------|
 | 1 | Client data safety | No cross-operator data in this layer. Each API call uses the specific well UUID. `resource_cache` is cleared between wells by the orchestrator. |
-| 2 | Platform safety | All endpoint methods route through `_make_request`, which acquires the `PLATFORM` rate limiter bucket (300ms floor) before every attempt including retries. All calls are GET or read-only POST. |
+| 2 | Platform safety | All endpoint methods route through `_make_request`. All calls are GET or read-only POST. Concurrent access is controlled by a semaphore in the orchestrator (v0.8.0+); the PLATFORM rate bucket was removed. Retry backoff still uses `RateLimiter.backoff_seconds()`. |
 | 3 | Accuracy | `adapt_*` functions enforce null vs. empty contract: `None` payload = INCONCLUSIVE path, empty data = NO path. No silent defaults. |
 | 4 | Completeness | Every one of the 29 checks has an adapter path. Missing strategy entry in `API_STRATEGY_MAP` logs `API_FETCH_FAILURE` and returns `INCONCLUSIVE` -- it does not silently skip the check. |
 | 5 | Transparency | Every request logged (`API_REQUEST_SUCCESS`, `API_REQUEST_FAILED`, `API_REQUEST_RETRY`). JWT registered with `LogSanitizer` immediately after login. Token never appears in audit logs. |
