@@ -11,7 +11,7 @@ baseurl: ""
 # Navigation structure
 aux_links:
   "Repository":
-    - "https://robert-blue-datascience.github.io/qc-agent-wiki"
+    - "https://github.com/robert-blue-datascience/qc-agent-wiki"
 
 # Footer
 footer_content: "QC Automation Agent &mdash; Program Wiki"
