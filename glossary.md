@@ -51,8 +51,6 @@ The outcome of a single QC check. One of five values:
 - **N/A** (excluded) -- Check does not apply to this well
 - **INCONCLUSIVE** (0.0) -- Agent could not determine the answer
 
-## C (continued)
-
 **Concurrent Execution**
 Running multiple tasks simultaneously rather than one after another. In v0.8.0, all 29 checks for a single well are dispatched at the same time and run in parallel (subject to a semaphore limit), rather than executing sequentially. The two-wave pattern ensures checks that depend on other checks' results still receive correct input.
 
