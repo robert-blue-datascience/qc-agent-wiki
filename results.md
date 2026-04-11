@@ -44,18 +44,18 @@ The first clean full-portfolio run through the direct API path completed on Apri
 
 The ~3 hour cumulative figure reflects running 20 operators sequentially in a shell loop, each as a separate agent invocation. No operator's data touched another operator's state during the run.
 
-Selected operator scores from that run:
+Selected operator scores from that run (operators anonymized):
 
 | Operator | Score | Wells |
 |---|---|---|
-| Caturus Energy | 88.6% | 3 |
-| Matador Resources Co | 72.9% | 7 |
-| Chord Energy | 69.5% | 5 |
-| Continental Resources | 66.3% | 12 |
-| Mewbourne Oil Company | 61.1% | 14 |
-| ConocoPhillips | 61.2% | 10 |
-| Crescent Energy | 50.6% | 6 |
-| Hilcorp Alaska LLC | 34.4% | 4 |
+| Operator A | 88.6% | 3 |
+| Operator B | 72.9% | 7 |
+| Operator C | 69.5% | 5 |
+| Operator D | 66.3% | 12 |
+| Operator E | 61.1% | 14 |
+| Operator F | 61.2% | 10 |
+| Operator G | 50.6% | 6 |
+| Operator H | 34.4% | 4 |
 
 ---
 

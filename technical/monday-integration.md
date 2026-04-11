@@ -75,9 +75,9 @@ flowchart TD
 
 ### Upsert by rig name, not well name
 
-**Decision:** The primary key for board lookup is the rig column (`text_mm1yhv0e`), not the item name (well name).
+**Decision:** The primary key for board lookup is the rig column, not the item name (well name).
 
-**Rationale:** Rigs persist on the board across wells. When a rig moves from `SMITH 1H` to `JONES 2H`, the board row for that rig already exists with history. Matching by rig preserves continuity and avoids creating duplicate rows every time a rig spuds a new well.
+**Rationale:** Rigs persist on the board across wells. When a rig moves from one well to the next, the board row for that rig already exists with history. Matching by rig preserves continuity and avoids creating duplicate rows every time a rig spuds a new well.
 
 **Alternative rejected:** Matching by well name (item name). This would create a new row every time a rig moves to a new well, fragmenting history and bloating the board.
 
@@ -139,7 +139,7 @@ Two bugs in `flag_stale_rigs` and the item rename path were corrected after the 
 
 **Fix:** The operator-scoped filter was removed. `flag_stale_rigs` now receives `all_active_rigs` -- the union of every rig across all operators in the full CSV -- and flags any board item whose rig name does not appear in that union. For `--well` and `--first` runs (where the full CSV is not loaded), stale flagging is skipped entirely to avoid false positives.
 
-**Second bug:** The status column ID in `monday_boards.yaml` was configured as `"status"` (invalid; Monday.com internal IDs are alphanumeric codes). Corrected to `"color_mkwrhcwa"`. The status label was also configured as `"Completed"` but the board only has `"Active"` and `"Complete"` as valid values. Corrected to `"Complete"`.
+**Second bug:** The status column ID in `monday_boards.yaml` was configured with an invalid key (`"status"` instead of the Monday.com internal alphanumeric column ID). The status label was also configured as `"Completed"` but the board only has `"Active"` and `"Complete"` as valid values. Both corrected.
 
 ---
 
@@ -159,68 +159,40 @@ Source of truth: `config/monday_boards.yaml`
 
 ```yaml
 active_wells_board:
-  board_id: "18194532141"
-  group_id: "1a844366-13c5-960d-8b25-9d78096657b4"  # "Active Well Assets" group
+  board_id: "<board_id>"
+  group_id: "<group_id>"  # "Active Well Assets" group
 ```
+
+Board and group IDs are internal Monday.com identifiers stored in `config/monday_boards.yaml`. They are not hardcoded in source files.
 
 The `qc_trend_summary_board` section is defined in the config for planning purposes but is not yet used by any code (Phase 2 deliverable).
 
 ### Metadata Columns
 
-These columns are read for lookup and operator scoping. The agent writes to `status` only (stale rig flagging).
+These columns are read for lookup and operator scoping. The agent writes to the status column only (stale rig flagging). Column IDs are internal Monday.com identifiers stored in `config/monday_boards.yaml`.
 
-| Purpose | Column ID | Notes |
+| Purpose | Config key | Notes |
 |---|---|---|
 | Well name (item name) | `name` | Monday.com built-in, not a custom column |
-| Rig | `text_mm1yhv0e` | Primary key for upsert lookup |
-| Operator | `operator` | Used for operator-scoped stale rig flagging |
-| Status | `status` | Written to `"Completed"` for stale rigs |
-| Basin | `basin` | Read-only reference |
-| Last updated | `last_updated` | Read-only reference |
+| Rig | `rig_column_id` | Primary key for upsert lookup |
+| Operator | `operator_column_id` | Used for operator-scoped stale rig flagging |
+| Status | `status_column_id` | Written to `"Complete"` for stale rigs |
+| Basin | `basin_column_id` | Read-only reference |
+| Last updated | `last_updated_column_id` | Read-only reference |
 
 ### Agent Score Column
 
-| Purpose | Column ID | Type |
+| Purpose | Config key | Type |
 |---|---|---|
-| Agent Total Quality Score | `numeric_mm21qrza` | Numeric, accepts float |
+| Agent Total Quality Score | `agent_score_column_id` | Numeric, accepts float |
 
-This column holds the agent-computed score (0-100). The board also has manual QC score columns (`formula_mkwsc3k0`, `formula_mkwrd5bp`, etc.) that the agent reads for historical comparison during the validation period but does not overwrite.
+This column holds the agent-computed score (0-100). The board also has manual QC score columns that the agent reads for historical comparison during the validation period but does not overwrite.
 
 ### Per-Check Status Columns
 
-All 29 check columns use Monday.com status column type (`color_*` prefix). The column IDs below are the source of truth for what `MondayClient._build_check_column_map()` produces at construction time.
+All 29 check columns use Monday.com status column type. Column IDs are stored in `config/monday_boards.yaml` and loaded by `MondayClient._build_check_column_map()` at construction time. The 29 checks covered are:
 
-| Check Name | Column ID |
-|---|---|
-| WITSML Connected | `color_mkwra8n6` |
-| Surveys | `color_mkwrpzaw` |
-| Survey Program | `color_mkwrmbyw` |
-| Survey Corrections | `color_mkwrqjsx` |
-| Live Geosteering | `color_mkwr9ykt` |
-| NPT Tracking | `color_mkwr4r65` |
-| Cost Analysis | `color_mkwrykhh` |
-| EDM Files | `color_mkwrk0pp` |
-| Well Plans | `color_mkws6csz` |
-| BHA Distro | `color_mkwrspdm` |
-| BHA - Comments | `color_mkwrbv2v` |
-| BHA - Uploads | `color_mkwrq36j` |
-| BHA - Failure Reports | `color_mkwrs8vf` |
-| BHA - Full Components | `color_mkwrt6gs` |
-| Post Run BHAs | `color_mkwr8kx2` |
-| Rig Inventory Data | `color_mkwr5k7s` |
-| Tool Catalog Data | `color_mkya1d9w` |
-| Mud Report Distro | `color_mkwryhxn` |
-| Mud Program | `color_mky83aje` |
-| Formation Tops | `color_mkwrhng1` |
-| Roadmaps | `color_mky8k693` |
-| Wellbore Diagrams | `color_mkwrcjmn` |
-| Engineering Scenarios | `color_mkwrdv67` |
-| AI Drill Prog | `color_mkzcg4rq` |
-| AFE Curves | `color_mkynphja` |
-| File Drive - BHAs | `color_mkzcsf69` |
-| File Drive - Well Plans | `color_mkzc6k6t` |
-| File Drive - Drill Prog | `color_mkyac7bc` |
-| File Drive - Mud Reports | `color_mm1xpwaw` |
+WITSML Connected, Surveys, Survey Program, Survey Corrections, Live Geosteering, NPT Tracking, Cost Analysis, EDM Files, Well Plans, BHA Distro, BHA - Comments, BHA - Uploads, BHA - Failure Reports, BHA - Full Components, Post Run BHAs, Rig Inventory Data, Tool Catalog Data, Mud Report Distro, Mud Program, Formation Tops, Roadmaps, Wellbore Diagrams, Engineering Scenarios, AI Drill Prog, AFE Curves, File Drive - BHAs, File Drive - Well Plans, File Drive - Drill Prog, File Drive - Mud Reports.
 
 ### Status Value Mapping
 
@@ -367,7 +339,7 @@ def find_item_by_rig(
 ) -> dict | None:
 ```
 
-Linear scan of `items` looking for the first item whose rig column (`text_mm1yhv0e`) matches `rig_name`. Returns the item dict or `None`.
+Linear scan of `items` looking for the first item whose rig column matches `rig_name`. Returns the item dict or `None`.
 
 ---
 
@@ -377,7 +349,7 @@ Linear scan of `items` looking for the first item whose rig column (`text_mm1yhv
 def read_agent_score(self, item: dict) -> float | None:
 ```
 
-Reads the current agent score from `numeric_mm21qrza` column. Returns `None` if the column is empty or non-numeric (first run, or data entry error). `None` means delta detection is skipped for that item.
+Reads the current agent score from the agent score column. Returns `None` if the column is empty or non-numeric (first run, or data entry error). `None` means delta detection is skipped for that item.
 
 ---
 
@@ -445,7 +417,7 @@ Used only when the rig matches an existing item but the well name has changed. M
 
 ### Delta Detection Logic
 
-Delta detection compares the new `agent_score` against the value in column `numeric_mm21qrza` on the existing board item. The comparison is:
+Delta detection compares the new `agent_score` against the value in the agent score column on the existing board item. The comparison is:
 
 ```python
 previous_score = self.read_agent_score(existing)

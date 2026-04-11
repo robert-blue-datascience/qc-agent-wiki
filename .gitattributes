@@ -1,2 +1,0 @@
-# Normalize all text files to LF on commit (Jekyll runs on Linux)
-* text=auto eol=lf

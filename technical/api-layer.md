@@ -36,7 +36,7 @@ flowchart TD
     A["orchestrator/graph.py\nCreates APIAuth + APIClient\nManages lifecycle"] --> B["orchestrator/nodes.py\nAPI_STRATEGY_MAP\n_process_check_api()"]
     B --> C["api/api_client.py\nAPIClient\n25 endpoint methods"]
     B --> D["api/api_adapter.py\n15 adapter functions\nDict in, dict out"]
-    C --> E["cloud-api.aidriller.com"]
+    C --> E["Platform API"]
     C --> F["api/auth.py\nAPIAuth\nget_headers()"]
     F --> E
     C --> H["guardrails/audit_logger.py\nEvery request logged"]
@@ -196,33 +196,32 @@ The PLATFORM rate limit bucket was removed in v0.8.0. Concurrent API access is n
 
 All methods are `async`, accept `uuid: str` unless noted, and return `dict`. All raise `httpx.HTTPStatusError` on non-recoverable HTTP errors and `httpx.RequestError` on network failure after retries.
 
-| Method | HTTP | URL | Extra params | Notes |
-|--------|------|-----|------|-------|
-| `get_well_search()` | POST | `/api/wells/search` | `json={}` | Returns 17k+ global wells. Read-only POST. No args. |
-| `get_well_detail(uuid)` | GET | `/api/wells/{uuid}` | -- | Returns `end_depth`, `well_tz`, realtime flag |
-| `get_bha_list(uuid)` | GET | `/api/wells/{uuid}/bha` | -- | Shared by checks 10, 11, 12, 13, 14, 15 |
-| `get_bha_details(uuid, bha_id)` | GET | `/api/wells/{uuid}/bha/{bha_id}/current_version` | `params={"full": "true"}` | Returns components with grade_out; two args |
-| `get_bha_files(bha_id)` | GET | `/api/bha/{bha_id}/files/list` | -- | Takes `bha_id` only, not `uuid` |
-| `get_surveys(uuid)` | GET | `/api/wps/surveys` | `params={"type": "FACT", "well_id": uuid}` | Query params, not path segment |
-| `get_file_drive_tree(uuid)` | GET | `/api/file_drive/{uuid}` | -- | Returns 2-level folder tree |
-| `get_witsml_link(uuid)` | GET | `/api/integration/well_link/well/{uuid}` | -- | Returns bare dict (no `data` wrapper) |
-| `get_survey_program(uuid)` | GET | `/api/wells/{uuid}/wps/survey_program` | `params={"type": "FACT"}` | |
-| `get_geosteering(uuid)` | GET | `/api/geosteering/{uuid}/interpretation` | -- | |
-| `get_npt_hazards(uuid)` | POST | `/api/wells/{uuid}/hazards/list` | `json={}` | Read-only POST; body required or returns 400 |
-| `get_cost_analysis(uuid)` | GET | `/api/wells/{uuid}/costs` | `params={"well_stage": "DRILLING"}` | |
-| `get_edm_history(uuid)` | GET | `/api/wells/{uuid}/edm_history` | -- | |
-| `get_survey_plans(uuid)` | GET | `/api/wells/{uuid}/surveys/plans` | -- | Returns `variantType` enum values |
-| `get_rig_inventory(uuid)` | GET | `/api/wells/{uuid}/bha/inventory` | -- | |
-| `get_tool_catalog(uuid)` | GET | `/api/bha/catalog` | `params={"well_id": uuid}` | Query param only; no uuid path segment |
-| `get_mud_reports(uuid)` | GET | `/api/well/{uuid}/mud` | -- | **Singular "well"** -- platform inconsistency, do not fix |
-| `get_mud_program(uuid)` | GET | `/api/wells/{uuid}/mud_program` | -- | |
-| `get_formation_tops(uuid)` | GET | `/api/wells/{uuid}/formations` | -- | |
-| `get_roadmaps(uuid)` | GET | `/api/wells/{uuid}/roadmap/list` | -- | |
-| `get_wellbore_designs(uuid)` | GET | `/api/wells/{uuid}/designs` | -- | Returns `design_type` (not `variantType`); has `_PLAN` suffix |
-| `get_engineering_scenarios(uuid)` | GET | `/api/wells/{uuid}/engineering/scenarios` | -- | |
-| `get_drilling_program(uuid)` | GET | `/api/wells/{uuid}/drill_prog` | -- | |
-| `get_afe_curves(uuid)` | GET | `/api/wells/{uuid}/time_cost_estimate` | -- | |
-| `get_well_detail(uuid)` | GET | `/api/wells/{uuid}` | -- | Also used by `adapt_surveys` for `end_depth` |
+| Method | HTTP | Data returned | Notes |
+|--------|------|--------------|-------|
+| `get_well_search()` | POST | Global well list | Returns the full portfolio (~17k wells). Read-only POST. No args. |
+| `get_well_detail(uuid)` | GET | Well metadata | Returns `end_depth`, `well_tz`, realtime flag |
+| `get_bha_list(uuid)` | GET | BHA list for a well | Shared by checks 10, 11, 12, 13, 14, 15 |
+| `get_bha_details(uuid, bha_id)` | GET | Full BHA component data | Returns components with grade_out; two args |
+| `get_bha_files(bha_id)` | GET | File list for a BHA | Takes `bha_id` only, not `uuid` |
+| `get_surveys(uuid)` | GET | Survey records | Query params specify survey type |
+| `get_file_drive_tree(uuid)` | GET | File drive folder tree | Returns 2-level folder tree |
+| `get_witsml_link(uuid)` | GET | WITSML integration status | Returns bare dict (no `data` wrapper) |
+| `get_survey_program(uuid)` | GET | Survey program | Filtered to FACT type |
+| `get_geosteering(uuid)` | GET | Geosteering interpretation | |
+| `get_npt_hazards(uuid)` | POST | NPT and hazard events | Read-only POST; empty body required |
+| `get_cost_analysis(uuid)` | GET | Cost analysis data | Filtered to DRILLING stage |
+| `get_edm_history(uuid)` | GET | EDM history | |
+| `get_survey_plans(uuid)` | GET | Survey plan variants | Returns `variantType` enum values |
+| `get_rig_inventory(uuid)` | GET | Rig inventory | |
+| `get_tool_catalog(uuid)` | GET | Tool catalog | UUID passed as query param, not path segment |
+| `get_mud_reports(uuid)` | GET | Mud report list | Platform inconsistency in endpoint naming; do not alter |
+| `get_mud_program(uuid)` | GET | Mud program | |
+| `get_formation_tops(uuid)` | GET | Formation tops | |
+| `get_roadmaps(uuid)` | GET | Roadmap list | |
+| `get_wellbore_designs(uuid)` | GET | Wellbore design variants | Returns `design_type` (not `variantType`); has `_PLAN` suffix |
+| `get_engineering_scenarios(uuid)` | GET | Engineering scenarios | |
+| `get_drilling_program(uuid)` | GET | Drilling program | |
+| `get_afe_curves(uuid)` | GET | AFE cost curves | |
 
 ---
 
@@ -361,16 +360,16 @@ If `get_bha_list` was not already in `resource_cache` when a per-BHA check runs,
 
 ## Platform API Gotchas
 
-These are inconsistencies in the AI Driller Cloud API that differ from the standard patterns. Each one is handled in code and must not be "fixed" (the platform owns these shapes).
+These are inconsistencies in the platform API that differ from the standard patterns. Each one is handled in code and must not be "fixed" (the platform owns these shapes).
 
-| Gotcha | Endpoint | Detail |
-|--------|----------|--------|
-| Singular "well" | `/api/well/{uuid}/mud` | Every other endpoint uses `"wells"` (plural). Using `"wells"` returns 404. |
-| Query param UUID | `/api/bha/catalog?well_id={uuid}` | Only endpoint that passes the UUID as a query param instead of a path segment. |
-| Read-only POST | `/api/wells/{uuid}/hazards/list` | Requires POST with `json={}`. Omitting the body returns 400. |
-| Bare dict response | `/api/integration/well_link/well/{uuid}` | Returns a flat dict with no `"data"` wrapper, unlike every other endpoint. Do not use `adapt_presence_check` for this endpoint. |
-| `design_type` vs `variantType` | `/api/wells/{uuid}/designs` | Wellbore designs uses `design_type` (not `variantType` like well plans). Enum values have `_PLAN` suffix. Verified 2026-04-07. |
-| `linked_interpretation_id` type | `/api/geosteering/{uuid}/interpretation` | Is an integer (`46000`) for some operators and a UUID string for others. Use `is not None` check, not type comparison. |
+| Gotcha | Affects | Detail |
+|--------|---------|--------|
+| Singular resource name | `get_mud_reports` | One endpoint uses a singular resource name where every other endpoint uses the plural form. Using the plural returns 404. |
+| Query param UUID | `get_tool_catalog` | Only endpoint that passes the well UUID as a query param instead of a path segment. |
+| Read-only POST | `get_npt_hazards` | Requires POST with an empty JSON body. Omitting the body returns 400. |
+| Bare dict response | `get_witsml_link` | Returns a flat dict with no `"data"` wrapper, unlike every other endpoint. Do not use `adapt_presence_check` for this endpoint. |
+| `design_type` vs `variantType` | `get_wellbore_designs` | Wellbore designs uses `design_type` field (not `variantType` like well plans). Enum values have `_PLAN` suffix. Verified 2026-04-07. |
+| `linked_interpretation_id` type | `get_geosteering` | Is an integer for some operators and a UUID string for others. Use `is not None` check, not type comparison. |
 
 ---
 

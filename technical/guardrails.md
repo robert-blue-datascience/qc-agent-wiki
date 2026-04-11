@@ -307,7 +307,7 @@ Returns a new dict with all secret values replaced by `[REDACTED]`. Deep-walks t
 
 **What it owns:** Pre-commit security policy scan. Six independent checks against source files, config files, and repo metadata.
 
-**`ALLOWED_DOMAINS`:** `{"cloud.aidriller.com", "cloud-api.aidriller.com", "api.monday.com"}` -- the only three domains the agent may contact.
+**`ALLOWED_DOMAINS`:** A hardcoded set of three approved domains -- the platform browser UI, the platform REST API, and the Monday.com GraphQL endpoint. Any URL outside this set fails the scan with a Zero Tolerance violation.
 
 **The six checks:**
 

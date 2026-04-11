@@ -50,7 +50,7 @@ One of the most significant performance optimizations in the Orchestrator is the
 
 ### The Problem
 
-To evaluate a specific well, the agent must resolve its name to a UUID via the platform's `/api/wells/search` endpoint. This endpoint returns a massive payload of over 17,000 global wells. Fetching this for every single well in a 111-well manifest would result in severe bandwidth waste and unnecessary time penalties.
+To evaluate a specific well, the agent must resolve its name to a UUID via the platform's well search endpoint. This endpoint returns the full global well list. Fetching this for every single well in a 111-well manifest would result in severe bandwidth waste and unnecessary time penalties.
 
 ### The Callback Solution
 
