@@ -98,3 +98,5 @@ The agent operates with several built-in safety measures:
 **Audit trail.** Every action the agent takes -- every data request, every evaluation result, every score published -- is recorded in a structured log. If a score is ever questioned, the full history of how it was determined can be reconstructed from the logs.
 
 **Deterministic evaluation.** There is no randomness, no machine learning inference, and no subjective judgment in the scoring. The rules are fixed and transparent. The same well data will always produce the same score.
+
+For a full description of each safety control, see the [Guardrails](guardrails) page.

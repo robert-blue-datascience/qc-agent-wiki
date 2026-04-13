@@ -55,7 +55,8 @@ Third person, present tense. Written for an engineer who knows Python but has ne
 | results.md | Results & Impact | 6 | -- | guide | COO, Account Managers | wiki-guide | background, scoring, roadmap |
 | trend-board.md | QC Trend Board | 7 | -- | guide | COO, Account Managers | wiki-guide | roadmap |
 | roadmap.md | Roadmap | 8 | -- | guide | All | wiki-guide | background, results, trend-board |
-| glossary.md | Glossary | 9 | -- | guide | All | wiki-guide | scoring, checks |
+| guardrails.md | Guardrails | 9 | -- | guide | All | wiki-guide | how-it-works, technical/guardrails |
+| glossary.md | Glossary | 10 | -- | guide | All | wiki-guide | scoring, checks |
 
 ### Tier 1: Category Sub-Pages
 
@@ -113,4 +114,5 @@ Tracks which pages exist and are current. Updated by wiki-sweep.
 | technical/orchestrator.md | Exists | 2026-04-10 |
 | technical/scoring-engine.md | Exists | 2026-04-07 |
 | technical/monday-integration.md | Exists | 2026-04-10 |
-| technical/guardrails.md | Exists | 2026-04-10 |
+| guardrails.md | Exists | 2026-04-12 |
+| technical/guardrails.md | Exists | 2026-04-12 |

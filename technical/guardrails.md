@@ -7,9 +7,9 @@ nav_order: 7
 
 # Guardrails
 
-The guardrails system is the security and observability foundation of the QC Automation Agent. It ensures every run is safe, auditable, and impossible to misconfigure in ways that could harm the platform, leak credentials, or produce silent incorrect results. For a non-technical overview of how the agent operates, see the [How It Works](../how-it-works) guide.
+The guardrails system is the security and observability foundation of the QC Automation Agent. It ensures every run is safe, auditable, and impossible to misconfigure in ways that could harm the platform, leak credentials, or produce silent incorrect results. For the non-technical overview, see the [Guardrails](../guardrails) guide.
 
-Last updated: 2026-04-10
+Last updated: 2026-04-12
 
 ---
 
@@ -53,7 +53,46 @@ flowchart TD
 
 **Execution order:** `static_analysis.py` runs before commit (offline). At runtime: `security_gate.py` runs first, blocking any run that fails policy. `rate_limiter.py` sits in front of every outbound request. `audit_logger.py` records every action. `log_sanitizer.py` scrubs every entry before it touches disk.
 
-**Upstream callers:** `orchestrator/graph.py` calls `run_gate()` at startup and constructs `AuditLogger`. `api/api_client.py` and `reporter/monday_client.py` call `get_limiter().acquire()` before every request. `audit_logger.py` calls `log_sanitizer.sanitize()` on every `log()` call.
+**Upstream callers:** `orchestrator/graph.py` calls `run_gate()` at startup and constructs `AuditLogger`. `reporter/monday_client.py` calls `get_limiter().acquire()` before every GraphQL mutation. `audit_logger.py` calls `log_sanitizer.sanitize()` on every `log()` call.
+
+---
+
+## Agent Initialization Sequence
+
+The guardrail components do not activate all at once. Each is constructed or called at a specific point in the startup sequence. Understanding this order explains how early events are captured and how the JWT registration window works.
+
+```mermaid
+flowchart TD
+    A["1. main() entry\nCLI args parsed"] --> B["2. run_gate()\nAll 6 checks\nRaises on any failure"]
+    B --> C["3. LogSanitizer()\nCredentials read from env\nat construction time"]
+    C --> D["4. AuditLogger(sanitizer)\nSanitizer injected\nBuffer mode active"]
+    D --> E["5. get_limiter(config)\nSingleton created\nfloors enforced"]
+    E --> F["6. APIAuth + APIClient\nConstructed, not yet logged in\nLogin is lazy"]
+    F --> G["7. First log() call\n'AGENT_STARTED'\nGoes to buffer -- no file yet"]
+    G --> H["8. select_well_node\nFirst well selected\nOutput dir determined"]
+    H --> I["9. set_output_dir()\nBuffer flushed to disk\nAll subsequent log() direct to file"]
+    I --> J["10. APIAuth.get_headers()\nLazy login triggered\nJWT obtained"]
+    J --> K["11. add_secret(jwt_token)\nJWT registered with sanitizer\nAll subsequent entries scrubbed"]
+
+    style A fill:#4a90d9,stroke:#2c5aa0,color:#fff
+    style B fill:#d96a4a,stroke:#a84e35,color:#fff
+    style C fill:#5ba585,stroke:#3d7a5e,color:#fff
+    style D fill:#5ba585,stroke:#3d7a5e,color:#fff
+    style E fill:#d96a4a,stroke:#a84e35,color:#fff
+    style F fill:#e8a838,stroke:#b8842c,color:#fff
+    style G fill:#4a90d9,stroke:#2c5aa0,color:#fff
+    style H fill:#e8a838,stroke:#b8842c,color:#fff
+    style I fill:#4a90d9,stroke:#2c5aa0,color:#fff
+    style J fill:#e8a838,stroke:#b8842c,color:#fff
+    style K fill:#5ba585,stroke:#3d7a5e,color:#fff
+```
+
+**Key timing points:**
+
+- Steps 1-6 are synchronous and happen before any `await`. If `run_gate()` fails, nothing else runs.
+- Steps 7-9: `AGENT_STARTED` and any events during well queue loading go to the buffer. The first `log()` call that can reach disk is step 9's flush.
+- Steps 10-11: The JWT token is not known until the first `get_headers()` call. `add_secret()` at step 11 closes the window where a JWT could theoretically appear in a log entry unscrubbed.
+- If `set_output_dir()` is never called (e.g., `run_gate()` raises), the buffer is never flushed. `close()` warns about the stranded events.
 
 ---
 
@@ -64,7 +103,7 @@ flowchart TD
 | | |
 |---|---|
 | **Decision** | `run_gate()` raises `SecurityPolicyViolation` immediately on any failed check. The agent does not start. No partial runs. No overrides. |
-| **Rationale** | LangGraph's tracing integration sends data to LangSmith by default. The network policy allows exactly three domains; LangSmith is not one of them. A passive warning is insufficient because warnings get ignored under time pressure. The gate must be active and must block execution, not advise. (ADR-QC-001, Decision 1) |
+| **Rationale** | The underlying orchestration framework's tracing integration sends data to an external service by default. The network policy allows exactly three domains; that service is not one of them. A passive warning is insufficient because warnings get ignored under time pressure. The gate must be active and must block execution, not advise. (ADR-QC-001, Decision 1) |
 | **Alternative rejected** | Passive warnings only -- rejected because warnings get ignored and the policy would have no teeth. |
 
 ### Singleton rate limiter with hard floors
@@ -72,8 +111,8 @@ flowchart TD
 | | |
 |---|---|
 | **Decision** | `get_limiter()` returns a process-level singleton. Hard floors and ceilings are enforced in `RateLimitConfig.__post_init__` and cannot be overridden by configuration values below the floor. |
-| **Rationale** | AI Driller Cloud is a production SaaS shared with real users. Floors prevent accidental misconfiguration from causing platform harm. The singleton pattern ensures no code path bypasses the limiter by constructing its own instance. (ADR-QC-001, Decision 2) |
-| **Alternative rejected** | Per-request `sleep()` calls -- rejected because they are not centrally auditable and can be bypassed by any caller that forgets to call them. Fully configurable floors -- rejected because config files get edited and the floors are policy, not preference. |
+| **Rationale** | The data platform is a production SaaS shared with real users. Floors prevent accidental misconfiguration from causing platform harm. The singleton pattern ensures no code path bypasses the limiter by constructing its own instance. (ADR-QC-001, Decision 2) |
+| **Alternative rejected** | Per-request `sleep()` calls -- rejected because they are not centrally auditable and can be bypassed by any caller that forgets to include them. Fully configurable floors -- rejected because config files get edited and the floors are policy, not preference. |
 
 ### Buffer-then-file audit logger lifecycle
 
@@ -107,13 +146,17 @@ flowchart TD
 
 **What it owns:** Startup policy verification. Runs six checks in order before any network activity. If any check fails, raises `SecurityPolicyViolation` and logs all failures. The agent does not start.
 
+**Check ordering rationale:** The six checks run in a deliberate sequence. Framework tracing checks come first (checks 1 and 2) because an active tracing integration would immediately begin capturing all subsequent operations, including authentication. Disabling it before any auth attempt ensures that if the gate ultimately passes, the auth operations were never traced. Credential presence (check 3) comes next because the remaining checks (filesystem safety) are only meaningful if a run could actually proceed. The gitignore checks (4-6) are the last line of defense against accidental secret exposure via version control.
+
 **Checks executed (in order):**
-1. `LANGCHAIN_TRACING_V2` is unset or `"false"` (case-insensitive)
-2. `LANGCHAIN_API_KEY` is not set
+1. `LANGCHAIN_TRACING_V2` is unset or `"false"` (case-insensitive) -- blocks framework tracing
+2. `LANGCHAIN_API_KEY` is not set -- blocks the tracing key independently of the tracing flag
 3. `ADC_USERNAME`, `ADC_PASSWORD`, and `MONDAY_API_TOKEN` are present and non-empty
 4. `.env` exists on disk and `".env"` appears (non-commented) in `.gitignore`
-5. `runs/` appears in `.gitignore` (directory is created if absent)
+5. `runs/` appears in `.gitignore` (directory is created if absent) -- protects run output from accidental commit
 6. None of the blocked telemetry vars are set (`SENTRY_DSN`, `DD_API_KEY`, `DATADOG_API_KEY`, `NEW_RELIC_LICENSE_KEY`, `HONEYCOMB_API_KEY`, `LANGCHAIN_API_KEY`)
+
+**All-failures collection pattern:** `run_gate()` does not stop at the first failed check. It calls all six private check functions, collects every `CheckResult`, then raises `SecurityPolicyViolation` if the set contains any failures. The `GateResult.failures` property returns the subset of `CheckResult` instances where `passed=False`. This means a machine with three misconfigurations reveals all three in one output rather than requiring three sequential fix-and-retry cycles.
 
 **Public interface:**
 
@@ -124,7 +167,7 @@ def run_gate(
     blocked_telemetry_vars: tuple[str, ...] = BLOCKED_TELEMETRY_VARS,
 ) -> GateResult
 ```
-- `project_root`: Repo root for filesystem checks. Auto-detected by walking up from the module file if `None`.
+- `project_root`: Repo root for filesystem checks. Auto-detected by walking up from the module file if `None` -- looks for a `.git` directory.
 - Returns `GateResult` with `.passed` bool and `.checks` list of `CheckResult` instances.
 - Raises `SecurityPolicyViolation` (subclass of `RuntimeError`) if any check fails. All failures are logged before raising.
 
@@ -145,8 +188,6 @@ class GateResult:
     @property
     def failures(self) -> list[CheckResult]: ...
 ```
-
-**Internal patterns:** Each of the six checks is a private function (`_check_langsmith_tracing_disabled`, etc.) that returns a `CheckResult`. `run_gate()` calls them all, collects results, logs each one, and raises only if any failed. This means all failures are visible in a single run, not just the first one.
 
 **ADR reference:** ADR-QC-001, Decision 1.
 
@@ -169,7 +210,7 @@ The `PLATFORM` bucket was removed in v0.8.0. API call concurrency is now managed
 
 | Parameter | Default | Floor | Ceiling | Notes |
 |---|---|---|---|---|
-| `min_page_delay_seconds` | 1.5s | 0.3s | -- | Unused since v0.8.0 (PLATFORM bucket removed). Field retained for config compatibility; no runtime consumer. |
+| `min_page_delay_seconds` | 1.5s | 0.3s | -- | No runtime consumer since v0.8.0 (PLATFORM bucket removed). Field retained for config compatibility; tracked for removal in v0.8.1. |
 | `max_pages_per_minute` | 15 | -- | 20 | |
 | `cooldown_between_operators_seconds` | 10s | 5s | -- | |
 | `retry_backoff_initial_seconds` | 5s | 5s | -- | |
@@ -177,7 +218,43 @@ The `PLATFORM` bucket was removed in v0.8.0. API call concurrency is now managed
 | `max_retries_per_action` | 5 | -- | 10 | |
 | `monday_calls_per_minute` | 10 | -- | 30 | |
 
-Floor enforcement happens in `__post_init__` and logs a `rate_limiter.floor_enforced` warning if a value was clamped.
+Floor and ceiling enforcement happens in `__post_init__`. When a value is clamped, `structlog` emits a `rate_limiter.floor_enforced` warning that includes the parameter name, the requested value, and the enforced value. This makes misconfigured values visible in the structlog output at startup.
+
+**Token bucket algorithm:**
+
+The `_TokenBucket` class maintains a sliding window over grant timestamps. The dual-wait computation in `seconds_until_available()` enforces both rate constraints simultaneously:
+
+```python
+def seconds_until_available(self) -> float:
+    self._purge_old_grants()          # remove timestamps older than 60s
+    now = time.monotonic()
+
+    # Constraint 1: per-minute ceiling
+    # If the bucket is full (grants this minute == max_per_minute),
+    # the oldest grant expires at oldest_grant + 60.0
+    if len(self._grants) >= self.max_per_minute:
+        oldest = self._grants[0]
+        window_wait = 60.0 - (now - oldest)
+    else:
+        window_wait = 0.0
+
+    # Constraint 2: minimum interval between consecutive grants
+    interval_wait = self.min_interval_seconds - (now - self._last_grant)
+
+    # The request must satisfy both constraints; wait for whichever is longer
+    return max(window_wait, interval_wait, 0.0)
+```
+
+`grant()` records the current monotonic timestamp in both `_grants` (the window list) and `_last_grant`. The `acquire()` flow:
+
+1. Call `seconds_until_available()`
+2. If wait > 0: log `rate_limiter.waiting` with `seconds`, `bucket`, and `context`; `await asyncio.sleep(seconds)`
+3. Call `grant()` (re-purges and records timestamp)
+4. Log `rate_limiter.granted`
+
+**Why `time.monotonic()` over `time.time()`:** Wall clock time can jump backward during NTP synchronization. A backward jump would produce a negative `(now - self._last_grant)` value, making `interval_wait` positive when it should be zero, and causing the bucket to think no time has passed since the last grant. `time.monotonic()` is guaranteed never to decrease, making all interval calculations safe.
+
+**Concurrency note:** `asyncio` runs a single-threaded event loop. The only yield point in `acquire()` is `await asyncio.sleep(seconds)`. From `seconds_until_available()` through `grant()`, no `await` occurs, so no other coroutine can interleave. The acquire-and-grant sequence is effectively atomic within the event loop.
 
 **`RateLimiter` public interface:**
 
@@ -207,14 +284,12 @@ Returns `config.max_retries_per_action`.
 ```python
 def get_limiter(config: RateLimitConfig | None = None) -> RateLimiter
 ```
-Returns the process-level singleton. `config` is required only on the first call; subsequent calls ignore it.
+Returns the process-level singleton. `config` is required only on the first call; subsequent calls ignore it. This design ensures that all callers -- wherever they are in the call stack -- share one set of grant timestamps. A second `RateLimiter` instance would have no knowledge of grants from the first.
 
 ```python
 def reset_limiter() -> None
 ```
 Resets the singleton to `None`. For testing only.
-
-**Internal pattern:** `_TokenBucket` tracks a list of grant timestamps and a `_last_grant` timestamp. `seconds_until_available()` computes the maximum of two waits: the per-minute window wait (if the bucket is full) and the minimum-interval wait (if not enough time has elapsed since the last grant). Expired grants (older than 60 seconds) are purged before each check.
 
 **ADR reference:** ADR-QC-001, Decision 2.
 
@@ -231,6 +306,45 @@ Resets the singleton to `None`. For testing only.
 4. `clear_output()` -- closes file, returns to buffer mode (called between operators).
 5. `close()` -- final shutdown. Warns via structlog if buffer events were never written.
 
+**Log entry format:**
+
+Every entry is a single JSON object on one line (JSON Lines format). The mandatory fields appear first, followed by well context when set, followed by the caller-supplied `**data` keys:
+
+```json
+{
+  "timestamp": "2026-04-12T14:32:07.421Z",
+  "event": "CHECK_COMPLETED",
+  "well_name": "Sample Well 1H",
+  "well_uuid": "00000000-0000-0000-0000-000000000001",
+  "check_id": 3,
+  "check_name": "surveys",
+  "status": "YES",
+  "score": 1.0,
+  "elapsed_ms": 142
+}
+```
+
+`timestamp` is always ISO 8601 UTC with a `Z` suffix, generated at the moment `log()` is called. `event` is the string identifier passed by the caller (e.g., `"CHECK_COMPLETED"`, `"RATE_LIMITER_WAITING"`, `"WELL_STARTED"`). All other fields are caller-supplied `**data`. Well context fields (`well_name`, `well_uuid`) are injected automatically when set via `set_well_context()`.
+
+**Buffer behavior during startup:**
+
+Before `set_output_dir()` is called, `_file` is `None` and `log()` appends each entry dict to `_buffer`. When `set_output_dir()` is called, it:
+1. Creates `output_dir` if it does not exist
+2. Opens `output_dir/audit.log` in append mode
+3. Iterates over `_buffer` in order, writing each entry
+4. Clears `_buffer`
+5. Sets the mode to direct-to-file for all subsequent `log()` calls
+
+If `set_output_dir()` is never called (e.g., the run was blocked by `run_gate()` raising), the buffer holds all startup events. `close()` will emit a `structlog.warning` with the count of unwritten entries. Those entries are lost. This is acceptable: if the agent never starts, there is no run directory to write them to, and the security gate result is visible in the terminal output.
+
+**Operator isolation guard:**
+
+`set_output_dir()` raises `RuntimeError` if `_file` is already open. This prevents the orchestrator from accidentally opening a second operator's log file while the first operator's file is still active. The orchestrator must call `clear_output()` after finishing each operator cycle before it can call `set_output_dir()` for the next one. Silent auto-close was explicitly rejected: a silent transition would make it possible to write one operator's events into another's file in any code path that fails to close properly.
+
+**Flush-on-every-write:**
+
+`_write()` calls `self._file.flush()` after every `json.dumps()` + write. OS buffering is bypassed. An event is on disk at the moment `log()` returns. A process crash cannot lose events that were logged before the crash. This adds a small per-event I/O cost that is acceptable at the agent's scale (~29 checks per well, ~150 wells per run).
+
 **Public interface:**
 
 ```python
@@ -246,7 +360,7 @@ Records one audit event. Builds `{"timestamp": ..., "event": ..., **well_context
 ```python
 def set_output_dir(self, output_dir: Path) -> None
 ```
-Creates `output_dir` if needed, opens `output_dir/audit.log` in append mode, flushes the buffer. Raises `RuntimeError` if a file is already open -- the orchestrator must call `clear_output()` between operators. This is the client data safety guard (Non-Negotiable #1).
+Creates `output_dir` if needed, opens `output_dir/audit.log` in append mode, flushes the buffer. Raises `RuntimeError` if a file is already open.
 
 ```python
 def clear_output(self) -> None
@@ -268,10 +382,6 @@ def close(self) -> None
 ```
 Closes any open file. If buffer contains unwritten events (never had `set_output_dir()` called), emits a `structlog.warning` with the count. This is the only place `audit_logger.py` uses structlog directly.
 
-**File format:** JSON Lines (`audit.log`). One JSON object per line. Every entry has `"timestamp"` (ISO 8601 UTC, `Z` suffix) and `"event"`. Well context fields (`well_name`, `well_uuid`) appear when set. Arbitrary `**data` keys follow.
-
-**Flush behavior:** `_write()` calls `self._file.flush()` after every `json.dumps()` write. Events are on disk immediately, not batched. A crash cannot lose events that were logged.
-
 ---
 
 ### `src/guardrails/log_sanitizer.py`
@@ -282,24 +392,44 @@ Closes any open file. If buffer contains unwritten events (never had `set_output
 - `CREDENTIAL_VAR_NAMES`: `("ADC_USERNAME", "ADC_PASSWORD", "MONDAY_API_TOKEN")` -- matched against `config/agent.yaml security.required_credential_vars`.
 - `REDACTED = "[REDACTED]"` -- replacement string for any matched secret value.
 
-**Public interface:**
+**Construction and secret registration:**
 
 ```python
 def __init__(self) -> None
 ```
-Reads credential values from `os.environ` at construction time. Only non-empty values are stored. If no credentials are set (e.g., in tests), `sanitize()` becomes a zero-cost passthrough.
+Reads the values of `CREDENTIAL_VAR_NAMES` from `os.environ` at construction time. Only non-empty values are stored. This means the sanitizer captures the credential values that are active at the time the agent starts. If `os.environ` has no credentials (e.g., in tests), `sanitize()` becomes a zero-cost passthrough -- no string replacements are attempted.
 
 ```python
 def add_secret(self, secret: str) -> None
 ```
-Registers an additional secret for scrubbing at runtime. Used by `src/api/auth.py` to register the JWT token immediately after login, so it never appears in audit logs. Empty strings and duplicates are ignored silently.
+Registers an additional secret for scrubbing. Used by `src/api/auth.py` to register the JWT token immediately after login. Empty strings and exact duplicates are silently ignored. This closes the window between credential construction (which happens before login) and token availability (which happens at the first `get_headers()` call). Once registered, the JWT token is scrubbed from all subsequent log entries.
+
+**The recursive scrub algorithm:**
+
+`sanitize()` returns a new dict. The input is never mutated. This immutability guarantee is important: `AuditLogger._write()` holds a reference to the entry dict it built, and calling `sanitize()` on it must not change that reference's contents.
+
+`_scrub(value)` dispatches on type:
 
 ```python
-def sanitize(self, entry: dict) -> dict
+def _scrub(self, value: object) -> object:
+    if isinstance(value, str):
+        for secret in self._secrets:
+            value = value.replace(secret, REDACTED)
+        return value
+    elif isinstance(value, dict):
+        return {k: self._scrub(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [self._scrub(item) for item in value]
+    else:
+        # int, float, bool, None -- pass through unchanged
+        return value
 ```
-Returns a new dict with all secret values replaced by `[REDACTED]`. Deep-walks the input recursively: handles nested dicts and lists. Non-string values (int, float, bool, None) pass through unchanged. Never raises -- on unexpected error, returns the entry unchanged and logs a `log_sanitizer.scrub_failed` warning via structlog. The input dict is never mutated.
 
-**Internal pattern:** `_scrub(value)` dispatches on type. Strings are processed with `str.replace(secret, REDACTED)` for each registered secret. Dicts and lists are walked recursively. All other types are returned unchanged. The `sanitize()` wrapper catches any exception and falls back to the original entry to ensure audit logging never fails due to the sanitizer.
+The recursion handles arbitrarily nested structures. Any log entry that contains a nested dict (e.g., an API error response embedded in the `**data`) is walked completely. List elements are individually scrubbed, so a list of error messages is also covered.
+
+**Fallback behavior:** `sanitize()` wraps the entire scrub in a `try/except`. On any unexpected exception, it logs `log_sanitizer.scrub_failed` via structlog (including the error details) and returns the original entry unchanged. Log completeness is prioritized over guaranteed redaction in this edge case. The scrub_failed warning is written to the structlog output, not the audit file, so it is visible in the terminal regardless of audit logger state.
+
+**Zero-cost passthrough:** When `_secrets` is empty, `_scrub()` on strings iterates over an empty set and returns the string unmodified. Dict and list walks still recurse but the string branches do no work. In unit tests that patch environment variables to empty, sanitize becomes essentially a dict copy operation.
 
 ---
 
@@ -307,25 +437,31 @@ Returns a new dict with all secret values replaced by `[REDACTED]`. Deep-walks t
 
 **What it owns:** Pre-commit security policy scan. Six independent checks against source files, config files, and repo metadata.
 
-**`ALLOWED_DOMAINS`:** A hardcoded set of three approved domains -- the platform browser UI, the platform REST API, and the Monday.com GraphQL endpoint. Any URL outside this set fails the scan with a Zero Tolerance violation.
+**Regex approach:** The scanner works on raw source text rather than parsed AST. This is appropriate for the checks being performed: they are all pattern-level questions (does this file contain a string matching this shape?) rather than semantic questions (does this variable hold a credential value at runtime?). Regex on raw text works even on YAML files, partially-written Python, and test fixture strings embedded inside helper functions. It has no import dependencies beyond the standard library and no exposure to Python version changes in AST node structure.
+
+**`ALLOWED_DOMAINS`:** A hardcoded set of three approved domains -- the platform browser UI, the platform REST API, and the Monday.com GraphQL endpoint. Any URL in source or config outside this set fails the scan. A separate `SAFE_URL_PATTERNS` set covers non-external URLs that may appear legitimately in code: `localhost`, `127.0.0.1`, `example.com`, standard documentation sites, and package registry URLs.
 
 **The six checks:**
 
-| Check | Function | What it scans | What it catches |
+| Check | Function | Scans | Catches |
 |---|---|---|---|
-| 1 | `check_credential_patterns(root_dir)` | `src/`, `tests/` `.py` files | String literals matching credential patterns (32+ char alphanumeric, Bearer tokens, Stripe-style keys), `keyword = "literal_value"` patterns for password/token/secret/api_key |
-| 2 | `check_disallowed_imports(root_dir)` | `src/`, `tests/` `.py` files | `import sentry_sdk`, `import datadog`, `import langsmith`, `import langchain` (but not `langgraph`) |
-| 3 | `check_url_allowlist(root_dir)` | `src/`, `tests/` `.py` and `config/` `.yaml` files | URLs not matching `ALLOWED_DOMAINS` or `SAFE_URL_PATTERNS` (localhost, example.com, docs URLs, etc.) |
+| 1 | `check_credential_patterns(root_dir)` | `src/`, `tests/` `.py` | String literals matching credential shapes (32+ char alphanumeric, Bearer tokens, Stripe-style `sk_live_*`), `keyword = "literal_value"` patterns for `password`, `token`, `secret`, `api_key` |
+| 2 | `check_disallowed_imports(root_dir)` | `src/`, `tests/` `.py` | `import sentry_sdk`, `import datadog`, `import langsmith`, `import langchain` (but not `langgraph`) |
+| 3 | `check_url_allowlist(root_dir)` | `src/`, `tests/` `.py`; `config/` `.yaml` | URLs not in `ALLOWED_DOMAINS` or `SAFE_URL_PATTERNS`; comments and doc URLs excluded |
 | 4 | `check_gitignore_compliance(root_dir)` | `.gitignore` | Missing required entries: `.env`, `runs/`, `screenshots/`, `__pycache__/`, `*.pyc` |
-| 5 | `check_env_example(root_dir)` | `.env.example` | Values that look like real credentials (long mixed-case alphanumeric, known key prefixes) |
-| 6 | `check_absolute_paths(root_dir)` | `src/` `.py` files only | String literals containing absolute path prefixes (`/home/`, `/Users/`, `C:\`, etc.) |
+| 5 | `check_env_example(root_dir)` | `.env.example` | Values that look like real credentials (mixed case + digits in long sequences, known key prefixes); obvious placeholders like `test_`, `fake_` are allowed |
+| 6 | `check_absolute_paths(root_dir)` | `src/` `.py` only | String literals containing OS-specific absolute path prefixes: `/home/`, `/Users/`, `/tmp/`, `C:\`, `D:\`, `/var/`, `/opt/`, `/etc/` |
+
+**Self-exclusion mechanism:** `test_static_analysis.py` is excluded from all six scan functions. The test file contains strings like `"password = 'realvalue'"` and `import sentry_sdk` written as fixture data inside `_write_file()` helper calls. These are intentional violation examples used to verify that each check function detects what it claims to detect. Including the test file in the scan would cause every check to report violations in its own test suite. The exclusion is a hardcoded path check at the top of each scan function.
+
+**Known limitation:** The absolute path check (check 6) uses a heuristic docstring tracker: a boolean toggle that flips on each triple-quote sequence seen in a file. This can mistrack multi-line string assignments that use triple quotes (as opposed to function/class docstrings). The limitation is documented in the source. It is acceptable because absolute paths do not appear inside docstrings in this codebase, so the mistrack scenario does not arise in practice.
 
 **Runner:**
 
 ```python
 def run_static_analysis(root_dir: str = ".") -> bool
 ```
-Runs all six checks, prints formatted pass/fail results, returns `True` if zero violations, `False` otherwise.
+Runs all six checks, prints formatted pass/fail results, returns `True` if zero violations, `False` otherwise. Exits with code `1` if violations are found (enabling use in pre-commit hooks or CI gates).
 
 **How to run:**
 
@@ -337,14 +473,85 @@ Or from Python:
 
 ```python
 from src.guardrails.static_analysis import run_static_analysis
-passed = run_static_analysis(".")  # returns True on clean pass
+passed = run_static_analysis(".")
 ```
 
-**What constitutes a violation:** Any item in the list returned by an individual check function. Each violation is a dict with `"file"`, `"line"`, and `"message"` keys. The runner exits with code `1` if any violations are found.
+Each violation is a dict with `"file"`, `"line"`, and `"message"` keys.
 
-**Known limitation:** The absolute path check uses a heuristic docstring tracker (toggle on triple-quote lines). It can mistrack multi-line string assignments that use triple quotes. This is documented in the source and is acceptable because absolute paths do not appear in docstrings in this codebase.
+---
 
-**Self-exclusion:** `test_static_analysis.py` is excluded from all scans because it contains intentional violation examples inside `_write_file()` string arguments as test fixtures.
+## Configuration Reference
+
+All guardrail configuration lives in `config/agent.yaml`. The table below maps every guardrail-relevant config key to the component that reads it, the floor and ceiling enforced in code, and the value currently in use.
+
+### `rate_limits` section
+
+| Key | Component | Default | Floor | Ceiling | Notes |
+|---|---|---|---|---|---|
+| `min_page_delay_seconds` | `RateLimitConfig` | `0.3` | `0.3s` | -- | No runtime consumer since v0.8.0. Tracked for removal in v0.8.1. |
+| `max_pages_per_minute` | `RateLimitConfig` | `15` | -- | `20` | |
+| `cooldown_between_operators_seconds` | `RateLimitConfig` | `10` | `5s` | -- | |
+| `retry_backoff_initial_seconds` | `RateLimitConfig` | `5` | `5s` | -- | |
+| `retry_backoff_max_seconds` | `RateLimitConfig` | `120` | -- | -- | |
+| `max_retries_per_action` | `RateLimitConfig` | `5` | -- | `10` | |
+| `monday_calls_per_minute` | `RateLimitConfig` | `10` | -- | `30` | |
+
+### `concurrency` section
+
+| Key | Component | Default | Notes |
+|---|---|---|---|
+| `semaphore_size` | `nodes.py` (orchestrator) | `8` | Max concurrent API fetches per well. Replaces the removed PLATFORM rate limit bucket. |
+| `check_timeout_seconds` | `nodes.py` | `10` | Per-check timeout: fetch + evaluate combined. |
+| `consecutive_timeout_limit` | `nodes.py` | `5` | Per-well: consecutive timeouts before well is aborted. |
+| `total_timeout_limit` | `nodes.py` | `15` | Per-well: cumulative timeout count before well is aborted. |
+| `consecutive_well_abort_limit` | `nodes.py` | `3` | Run-level: consecutive aborted wells before the entire run halts. |
+
+### `security` section
+
+| Key | Component | Notes |
+|---|---|---|
+| `blocked_telemetry_env_vars` | `security_gate.py` | List of env vars that must not be set. Defaults match `BLOCKED_TELEMETRY_VARS` constant. |
+| `required_credential_vars` | `security_gate.py` | Vars that must be present and non-empty. Defaults match `REQUIRED_CREDENTIALS` constant. |
+| `langsmith_kill_switch_var` | `security_gate.py` | The framework tracing variable to check. |
+| `langsmith_key_var` | `security_gate.py` | The framework API key variable to check. |
+
+**Floor enforcement behavior:** When `RateLimitConfig.__post_init__` clamps a value to its floor or ceiling, it emits a `structlog` warning at the `warning` level. The warning appears in the terminal before the first log entry is written to disk. It includes the parameter name, the value that was provided, and the value that was enforced. This ensures misconfiguration is visible and not silently corrected.
+
+---
+
+## Failure Modes
+
+What happens when a guardrail component itself fails, rather than catching a policy violation.
+
+### `security_gate.py`
+
+**If the gate has a bug and passes when it should not:** No runtime fallback. Gate correctness is enforced entirely by the test suite (`test_security_gate.py`). The defense-in-depth design means the runtime guards (rate limiter, log sanitizer) provide independent coverage against the same classes of risk, so a missed gate check would not necessarily cause data exposure. However, a tracing integration leak would not be caught by any other guardrail.
+
+**If project root auto-detection fails (no `.git` found):** The check falls back to the current working directory. If that is wrong, the gitignore checks may produce false negatives. This is a known edge case for unusual invocation patterns (e.g., running from a deeply nested directory without a `.git` ancestor). All other checks (env var checks) are unaffected.
+
+### `rate_limiter.py`
+
+**If `asyncio.sleep()` is interrupted by task cancellation:** `asyncio.sleep()` raises `asyncio.CancelledError` when the enclosing task is cancelled. This propagates out of `acquire()` without calling `grant()`. The request is never sent, and the bucket is never granted. This is the correct behavior: a cancelled task should not consume a rate limit token or send a request.
+
+**If the singleton is accessed from a different process** (e.g., in a subprocess): The singleton is process-local. A subprocess would construct a new `RateLimiter` instance and maintain its own independent grant history. In the current architecture, the agent does not spawn subprocesses, so this is not a practical concern.
+
+### `audit_logger.py`
+
+**If `self._file.write()` raises `OSError`** (e.g., disk full, permissions error): The exception propagates uncaught from `_write()` through `log()` to the caller. There is no fallback. This would abort the check node that triggered the log call. This is the known coverage gap identified in the testing notes -- it is unlikely in practice (local disk on a development machine) but represents an unhandled failure path.
+
+**If `set_output_dir()` raises** (double-call operator isolation guard): The orchestrator is expected to handle this `RuntimeError`. If it does not, the run aborts with an unhandled exception. The existing orchestrator code calls `clear_output()` before each new `set_output_dir()` call, so this guard should only trigger in code path bugs.
+
+### `log_sanitizer.py`
+
+**If `_scrub()` raises an unexpected exception:** `sanitize()` catches any exception, logs `log_sanitizer.scrub_failed` via structlog (with error type and detail), and returns the original entry unchanged. The audit logger then writes the unscrubbed entry. This prioritizes audit completeness over guaranteed redaction. The scrub_failed warning is written to structlog output (terminal), making it visible even if the audit file is inaccessible.
+
+**If `add_secret()` is called after a credential already appears in the buffer:** The buffer entries are sanitized at `set_output_dir()` flush time, not at `log()` time. Entries that were buffered before `add_secret()` was called are sanitized when the buffer is flushed. This means the JWT token registered in step 11 of the initialization sequence covers any JWT-containing entries that ended up in the buffer during steps 7-9, provided those entries were not already flushed. In practice, the JWT is never in buffer entries because login is not triggered until after `set_output_dir()` is called.
+
+### `static_analysis.py`
+
+**If the scanner produces a false negative** (a real violation that regex does not catch): The runtime guards provide independent coverage. The log sanitizer scrubs any credential that reaches a log call. The security gate checks for active telemetry independently. Neither depends on the static scanner having already blocked the violation. The defense-in-depth design means false negatives in one layer are covered by other layers.
+
+**If the scanner produces a false positive** (a legitimate pattern flagged as a violation): The violation appears in the output with file and line number. The developer must fix the source (e.g., by moving a URL to a variable reference rather than a string literal) or add the pattern to the appropriate allowlist constant in `static_analysis.py`. There is no suppression mechanism for individual violations -- they must be resolved.
 
 ---
 
@@ -362,11 +569,11 @@ passed = run_static_analysis(".")  # returns True on clean pass
 
 ## Testing Strategy
 
-**Test count (as of 2026-04-07):** 627 total passing. Guardrails tests span 6 files.
+**Test count (as of 2026-04-10):** 735 total passing. Guardrails tests span 6 files.
 
 ### `tests/guardrails/test_security_gate.py`
 
-**What is tested:** Every individual check function has a passing case and at least one failing case. `run_gate()` integration test verifies all checks pass together, raises `SecurityPolicyViolation` on first failure, and reports all failures in a single raise (not just the first one).
+**What is tested:** Every individual check function has a passing case and at least one failing case. `run_gate()` integration test verifies all checks pass together, raises `SecurityPolicyViolation` on any failure, and reports all failures in a single raise rather than stopping at the first.
 
 **Mocking strategy:** `monkeypatch` for environment variables. `tmp_path` for filesystem isolation (`.env`, `.gitignore`, `runs/` directory creation).
 
@@ -374,39 +581,39 @@ passed = run_static_analysis(".")  # returns True on clean pass
 
 ### `tests/guardrails/test_rate_limiter.py`
 
-**What is tested:** Config floor and ceiling enforcement. `_TokenBucket` min-interval enforcement, per-minute window limit, expired grant purging. `RateLimiter.backoff_seconds()` initial, doubling, and max cap. `acquire()` with no wait and with required wait. Singleton identity (`get_limiter()` returns the same instance).
+**What is tested:** Config floor and ceiling enforcement. `_TokenBucket` min-interval enforcement, per-minute window limit, expired grant purging. `RateLimiter.backoff_seconds()` initial value, doubling behavior, and max cap. `acquire()` with no wait and with required wait. Singleton identity (`get_limiter()` returns the same instance on repeated calls).
 
-**Mocking strategy:** `time.monotonic` is monkeypatched to a controllable clock so tests run without real sleeps. `asyncio.sleep` is patched with `AsyncMock` or a side-effect function that advances the fake clock.
+**Mocking strategy:** `time.monotonic` is monkeypatched to a controllable float so tests advance time without real sleeps. `asyncio.sleep` is patched with `AsyncMock` whose `side_effect` advances the fake clock. This allows floor enforcement tests to verify the exact clamped values and bucket tests to verify exact wait durations without wall-clock dependency.
 
-**Coverage:** Floors for `min_page_delay_seconds` (0.3s), `cooldown_between_operators_seconds` (5s), `retry_backoff_initial_seconds` (5s). Ceilings for `max_pages_per_minute` (20), `max_retries_per_action` (10), `monday_calls_per_minute` (30). `autouse` fixture resets the singleton before and after each test.
+**Coverage:** Floors: `min_page_delay_seconds` (0.3s), `cooldown_between_operators_seconds` (5s), `retry_backoff_initial_seconds` (5s). Ceilings: `max_pages_per_minute` (20), `max_retries_per_action` (10), `monday_calls_per_minute` (30). `autouse` fixture calls `reset_limiter()` before and after each test to prevent singleton state from leaking between tests.
 
 ### `tests/guardrails/test_audit_logger.py`
 
-**What is tested:** Buffer behavior before `set_output_dir()` is called. Buffer flush order on `set_output_dir()`. File creation. Operator isolation guard (raises on double `set_output_dir()`). Direct-to-disk writes after `set_output_dir()`. JSON format and required fields. Flush-on-every-write (file readable after each `log()` call). `clear_output()` returns to buffer mode. `close()` warns on unwritten buffer events. Sanitizer called on every entry. Well context injection and clearing. Context does not leak across operator cycles. Explicit `**data` overrides context.
+**What is tested:** Buffer behavior before `set_output_dir()` is called. Buffer flush order on `set_output_dir()`. File creation. Operator isolation guard (raises on double `set_output_dir()`). Direct-to-disk writes after `set_output_dir()`. JSON format and required fields. Flush-on-every-write (file readable after each `log()` call before the test reads it). `clear_output()` returns to buffer mode. `close()` warns on unwritten buffer events. Sanitizer called on every entry. Well context injection and clearing. Context does not leak across operator cycles. Explicit `**data` keys override context when keys conflict.
 
-**Mocking strategy:** `mock_sanitizer` fixture provides a `MagicMock` with `sanitize` passing entries through unchanged. `tmp_path` for filesystem isolation. `patch("src.guardrails.audit_logger.log")` for structlog warning assertion.
+**Mocking strategy:** `mock_sanitizer` fixture provides a `MagicMock` with `sanitize` as a passthrough (returns the input dict unchanged). This decouples logger tests from sanitizer behavior. `tmp_path` for filesystem isolation. `patch("src.guardrails.audit_logger.log")` for asserting on structlog warning calls in `close()`.
 
-**Coverage gap:** The logger's behavior when `self._file.write()` raises an `OSError` (e.g., disk full) is not tested. This would cause an unhandled exception propagating to the caller.
+**Coverage gap:** Logger behavior when `self._file.write()` raises `OSError` (disk full) is not tested. This would propagate uncaught to the caller. Tracked as a known gap.
 
 ### `tests/guardrails/test_log_sanitizer.py`
 
-**What is tested:** String field redaction. Credential embedded in a longer string (partial replacement). Multiple credentials in one entry. Nested dict scrubbing. List scrubbing. Non-string values pass through unchanged. No-op passthrough when no secrets are set. Input dict immutability. `add_secret()` registers new values. `add_secret("")` ignored. `add_secret()` deduplication. No raise on unexpected types in the dict.
+**What is tested:** String field redaction. Credential embedded in a longer string (partial match replacement). Multiple credentials in one entry. Nested dict scrubbing. List element scrubbing. Non-string values (int, float, bool, None) pass through unchanged. Zero-cost passthrough when no secrets are set. Input dict immutability verified by asserting input unchanged after `sanitize()`. `add_secret()` registers new values. `add_secret("")` ignored. `add_secret()` deduplication (same secret added twice, only one replacement applied). No exception raised on unexpected types in the dict.
 
-**Mocking strategy:** `patch.dict("os.environ", ...)` to inject fake credential values. `sanitizer_no_secrets` fixture uses `clear=True` to ensure a clean environment.
+**Mocking strategy:** `patch.dict("os.environ", ...)` to inject fake credential values. `sanitizer_no_secrets` fixture uses `clear=True` to ensure a clean environment with no real credentials leaking in from the test runner.
 
-**Coverage:** All three credential variable names covered. Recursive walk covers two levels of nesting and list elements.
+**Coverage:** All three credential variable names covered. Recursive walk covers two levels of nesting and list elements. The `add_secret()` path verified independently from constructor-time credential loading.
 
 ### `tests/guardrails/test_audit_logger_sanitizer_integration.py`
 
-**What is tested:** End-to-end credential scrubbing from `AuditLogger.log()` through a real `LogSanitizer` to a file on disk. Verifies the raw credential value does not appear anywhere in the file content and the field contains `[REDACTED]`.
+**What is tested:** End-to-end credential scrubbing from `AuditLogger.log()` through a real (non-mocked) `LogSanitizer` to a file on disk. Verifies the raw credential value does not appear anywhere in the file content and the relevant field contains `[REDACTED]`. This is the only test that exercises the full sanitizer-to-disk pipeline.
 
 **Mocking strategy:** `patch.dict("os.environ", ...)` for the fake password. Real `LogSanitizer` (not mocked). Real file I/O via `tmp_path`.
 
 ### `tests/guardrails/test_static_analysis.py`
 
-**What is tested:** Each of the six check functions has tests for detecting a violation and allowing a clean file. Tests use `tmp_path` with synthesized source files written via a `_write_file()` helper. `run_static_analysis()` is tested end-to-end against a clean minimal repo.
+**What is tested:** Each of the six check functions has tests for detecting a violation and for passing a clean file. Tests write real files to `tmp_path` using a `_write_file()` helper and call the check functions directly. `run_static_analysis()` is tested end-to-end against a minimal clean repo (no violations) and against repos with individual violations.
 
-**Mocking strategy:** No mocks. Tests write real files to `tmp_path` and call the check functions directly.
+**Mocking strategy:** No mocks. The tests operate on real files in `tmp_path`. This verifies the regex patterns against actual file content rather than mocked strings.
 
 **How to run the full guardrail test suite:**
 
