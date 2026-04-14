@@ -24,31 +24,39 @@ The agent was expanded from single-well operation to full-portfolio processing. 
 ### API Migration
 The data extraction layer was migrated from browser-based automation to direct API communication. The browser approach degraded silently after approximately 45 minutes, producing incorrect scores at scale. The API path makes each check fully independent: a failed call returns INCONCLUSIVE for that check only and the run continues. The first full portfolio run through the API path completed April 9, 2026 -- 106 wells, 20 operators, 3,045 checks executed, all scores published.
 
-### Concurrent Check Execution (v0.8.0)
+### Concurrent Check Execution (v0.8.0 -- April 10, 2026)
 All 29 checks for a single well now run in parallel rather than sequentially. A two-wave execution model (independent checks first, dependency-bound checks second) preserves correctness while allowing maximum parallelism. Per-well and run-level circuit breakers protect against cascading timeouts. Request coalescing ensures shared API endpoints are fetched once per well regardless of how many checks need them.
+
+The first concurrent full-portfolio run completed April 13, 2026: 106 wells, 19 operators, 3,074 checks, total run time 2 minutes 53 seconds -- down from approximately 3 hours 9 minutes with sequential execution.
+
+### Architectural Cleanup (v0.8.1 -- April 13, 2026)
+Post-release cleanup ahead of the v0.9.0 graph restructure. Removed stale state fields and configuration entries that had no runtime consumers after the v0.8.0 concurrent refactor. Log event naming aligned to the two-phase fetch model introduced in v0.8.0. Lambda closure correctness fixed in the check execution loop.
 
 ---
 
 ## Current Focus
 
-### v0.8.1 -- Cleanup and Architectural Correctness
-A set of backlog items identified during v0.8.0 development that improve architectural cleanliness before the v0.9.0 graph restructure:
+### v0.9.0 -- API-Driven Well Discovery and Supabase
 
-- Refactor run-level circuit breaker drain out of `process_check_node` (check-execution nodes should not modify routing state)
-- Remove stale `min_page_delay_seconds` field from the rate limiter config (unused since the PLATFORM bucket was removed)
-- Remove stale `current_check` field from the orchestrator state (not written in the concurrent model)
-- Disambiguate duplicate `API_REQUEST_SUCCESS` log events emitted from both the orchestrator and the API client
-- Add test coverage for multi-fetch strategy lambda correctness
+The next release replaces the manually maintained CSV input file with automated well discovery and adds a persistent results database. Four phases:
+
+**Phase A -- Well Discovery.** The agent will query the platform API directly to find all active wells for each configured operator. No more manual input file. Operators and their active/historical status filters are defined in a configuration file. Discovery runs at the start of each agent invocation.
+
+**Phase B -- Supabase Integration.** Run results will be written to a Supabase database, providing a persistent, queryable record of every QC run, every well result, and every check result. This replaces the per-run JSON report as the primary results store and enables the trend board described below.
+
+**Phase C -- Historical Run Mode.** A dedicated run mode for historical (completed) wells. Historical runs evaluate a reduced check set appropriate for wells that are no longer actively drilling and export results to a flat CSV for analysis.
+
+**Phase D -- Simplified Monday.com Publishing.** The Monday.com integration will be simplified to a single per-operator summary write after each active run, removing the per-check status columns and stale-rig detection logic that depended on the CSV input.
 
 ---
 
 ## Upcoming
 
 ### QC Trend Board
-A historical tracking system that shows how operator scores change over time, surfacing improvement patterns and persistent gaps. See the [QC Trend Board](trend-board) page for details on what this will look like.
+A historical tracking system that shows how operator scores change over time, surfacing improvement patterns and persistent gaps. Requires the Supabase results database from v0.9.0. See the [QC Trend Board](trend-board) page for details on what this will look like.
 
 ### Historical Well Expansion
-Extending QC checks beyond the actively drilling wells to cover the platform's full inventory of approximately 15,600 wells. This would provide a comprehensive data quality baseline across the entire well database, identifying gaps that were previously invisible.
+Extending QC checks beyond the actively drilling wells to cover the platform's full inventory of approximately 15,600 wells. This would provide a comprehensive data quality baseline across the entire well database, identifying gaps that were previously invisible. The agent's current execution speed -- approximately one second per well -- makes this feasible for the first time.
 
 ### Recovery Recommendation Engine
 An extension that not only identifies what data is missing, but suggests specific actions to fix it. Instead of just reporting "BHA components are incomplete," the system would indicate which specific BHA runs need attention and what fields are missing.
@@ -60,3 +68,5 @@ Moving from scheduled runs to continuous monitoring with anomaly detection. Rath
 
 {: .note }
 This roadmap describes the project's direction, not a fixed timeline. Priorities may shift based on business needs, and items may be reordered or adjusted as the project evolves.
+
+*Last updated: 2026-04-13*

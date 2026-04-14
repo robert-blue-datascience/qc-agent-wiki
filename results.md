@@ -31,7 +31,7 @@ At this pace, data quality issues could persist for up to a week before being id
 
 ### April 9, 2026 -- First Full Portfolio Run (API Path)
 
-The first clean full-portfolio run through the direct API path completed on April 9, 2026. This replaced the earlier browser-based approach that had produced unreliable scores due to session degradation.
+The first clean full-portfolio run through the direct API path completed on April 9, 2026. This replaced the earlier browser-based approach that had produced unreliable scores due to session degradation. Checks ran sequentially within each well.
 
 | Metric | April 9 Run |
 |---|---|
@@ -39,23 +39,51 @@ The first clean full-portfolio run through the direct API path completed on Apri
 | **Wells checked** | 106 of 107 (1 unreachable) |
 | **Total checks executed** | 3,045 |
 | **Avg time per well** | ~1m 47s |
-| **Cumulative time (all operators)** | ~3h 9m |
+| **Total run time** | ~3h 9m |
 | **Consistency** | Deterministic (same data = same result, every time) |
 
-The ~3 hour cumulative figure reflects running 20 operators sequentially in a shell loop, each as a separate agent invocation. No operator's data touched another operator's state during the run.
+---
+
+### April 13, 2026 -- First Concurrent Run (v0.8.0)
+
+Version 0.8.0 introduced parallel check execution within each well. All 29 checks for a single well now run simultaneously rather than one at a time. The results from the first concurrent full-portfolio run:
+
+| Metric | April 13 Run |
+|---|---|
+| **Operators** | 19 |
+| **Wells checked** | 106 |
+| **Total checks executed** | 3,074 |
+| **Avg time per well** | ~1s |
+| **Total run time** | 2m 53s |
+| **Portfolio score** | 61.8% |
+| **Unreachable wells** | 0 |
+| **Consistency** | Deterministic (same data = same result, every time) |
+
+The total run time dropped from approximately 3 hours 9 minutes to 2 minutes 53 seconds -- a roughly 65x improvement -- with no change to check logic or result correctness.
 
 Selected operator scores from that run (operators anonymized):
 
 | Operator | Score | Wells |
 |---|---|---|
-| Operator A | 88.6% | 3 |
-| Operator B | 72.9% | 7 |
-| Operator C | 69.5% | 5 |
-| Operator D | 66.3% | 12 |
-| Operator E | 61.1% | 14 |
-| Operator F | 61.2% | 10 |
-| Operator G | 50.6% | 6 |
-| Operator H | 34.4% | 4 |
+| Operator A | 87.1% | 3 |
+| Operator B | 83.3% | 1 |
+| Operator C | 75.4% | 2 |
+| Operator D | 72.8% | 5 |
+| Operator E | 71.8% | 7 |
+| Operator F | 70.2% | 7 |
+| Operator G | 66.4% | 13 |
+| Operator H | 63.6% | 1 |
+| Operator I | 62.2% | 10 |
+| Operator J | 59.8% | 3 |
+| Operator K | 59.2% | 15 |
+| Operator L | 58.7% | 1 |
+| Operator M | 56.8% | 2 |
+| Operator N | 52.9% | 6 |
+| Operator O | 51.9% | 2 |
+| Operator P | 50.6% | 8 |
+| Operator Q | 49.4% | 13 |
+| Operator R | 49.1% | 3 |
+| Operator S | 33.4% | 4 |
 
 ---
 
@@ -71,7 +99,7 @@ Every run of the agent produces identical results for identical data. There is n
 
 ### Frequency
 
-With reliable automation, the constraint on frequency shifts from capability to scheduling preference. The team can now run QC checks daily or multiple times per day. Data quality issues that previously took a week to surface can be identified within hours.
+With a full-portfolio run now completing in under 3 minutes, the constraint on frequency has effectively disappeared. The team can run QC checks multiple times per day with no meaningful overhead. Data quality issues that previously took a week to surface can now be identified within the hour.
 
 ### Coverage
 
@@ -79,17 +107,17 @@ The agent checks every well in the input file for every one of the 29 modules. T
 
 ---
 
-## What Comes Next for Speed
+## What Comes Next for Scale
 
-The April 9 run processed checks sequentially within each well -- one check, then the next. Version 0.8.0, released April 10, 2026, introduces concurrent check execution: all 29 checks for a single well run in parallel, bounded by a configurable semaphore. Based on the time structure of the April 9 run, concurrent execution is expected to reduce the per-well time significantly. The first concurrent run will establish the new baseline.
+With per-well time now in the one-second range, the bottleneck has shifted from execution speed to data availability and scope. Two areas are on the near-term roadmap:
+
+**Automated well discovery.** The current workflow requires a manually maintained input file of active wells. Version 0.9.0 will replace that file with an API-driven discovery process: the agent queries the platform directly to find all active wells for each operator, removing the need for manual list maintenance and reducing the risk of missing newly-added rigs.
+
+**Historical well coverage.** The platform contains approximately 15,600 wells in its database, spanning years of drilling history. The agent's execution speed now makes it feasible to run QC checks across the full historical inventory -- a task that was previously impossible at any practical frequency.
 
 ---
 
 ## Scaling Potential
-
-The agent's architecture opens up several expansion opportunities:
-
-**Historical well coverage.** The platform contains approximately 15,600 wells in its database, spanning years of drilling history. Manual QC was limited to the ~115 actively drilling wells. The agent could feasibly check the entire historical inventory -- a task that was previously impossible.
 
 **Increased check scope.** The current 29 checks cover the most important data modules. As the platform adds new features, additional checks can be added to the agent without increasing the time burden proportionally.
 
@@ -107,6 +135,10 @@ The path from manual process to automated agent was iterative:
 
 3. **Improve the foundation.** Migrating to direct API communication preserved everything that worked (the rules, the scoring, the reporting) while eliminating session degradation.
 
-4. **Expand performance.** With a reliable foundation, concurrent execution becomes the next layer -- reducing run time without changing the result correctness the API path established.
+4. **Remove the bottleneck.** With a reliable foundation in place, concurrent execution reduced per-well time from ~107 seconds to ~1 second -- a change that transforms what is possible in terms of frequency and scope.
 
 This cycle -- build, validate, identify limits, improve -- reflects the iterative approach that continues to guide the project's development.
+
+---
+
+*Last updated: 2026-04-13*

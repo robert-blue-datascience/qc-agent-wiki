@@ -122,7 +122,6 @@ The browser era had a `browser_dead` flag because a Playwright crash corrupted a
 | `check_queue` | `list[dict]` | `initialize_run_node`; consumed by `process_check_node` | Ordered list of YAML check configs to run |
 | `full_check_queue` | `list[dict]` | `initialize_run_node` | Unfiltered check queue; used by `generate_report_node` for coverage calculations |
 | `checks_queued` | `int` | `initialize_run_node` | Total checks in queue after `--checks` filtering; used by report |
-| `current_check` | `dict \| None` | (unused since v0.8.0) | Field retained in TypedDict but no longer written; `process_check_node` now returns all results at once. Reads return a stale value from the prior well. |
 | `current_module_key` | `str \| None` | `save_well_results_node` | Reset to `None` between wells |
 | `check_results` | `dict[str, dict]` | `process_check_node` | Map of `check_name -> result_dict`; cleared between wells |
 | `run_id` | `str` | `initialize_run_node` | UUID for the run; written to report |

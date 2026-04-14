@@ -103,9 +103,9 @@ Tracks which pages exist and are current. Updated by wiki-sweep.
 | checks/tool-inventory.md | Exists | 2026-04-07 |
 | checks/file-drive.md | Exists | 2026-04-07 |
 | scoring.md | Exists | 2026-04-07 |
-| results.md | Exists | 2026-04-10 |
+| results.md | Exists | 2026-04-13 |
 | trend-board.md | Exists (placeholder) | 2026-04-07 |
-| roadmap.md | Exists | 2026-04-10 |
+| roadmap.md | Exists | 2026-04-13 |
 | glossary.md | Exists | 2026-04-10 |
 | technical/index.md | Exists | 2026-04-07 |
 | technical/architecture.md | Exists | 2026-04-07 |

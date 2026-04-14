@@ -210,15 +210,13 @@ The `PLATFORM` bucket was removed in v0.8.0. API call concurrency is now managed
 
 | Parameter | Default | Floor | Ceiling | Notes |
 |---|---|---|---|---|
-| `min_page_delay_seconds` | 1.5s | 0.3s | -- | No runtime consumer since v0.8.0 (PLATFORM bucket removed). Field retained for config compatibility; tracked for removal in v0.8.1. |
-| `max_pages_per_minute` | 15 | -- | 20 | |
 | `cooldown_between_operators_seconds` | 10s | 5s | -- | |
 | `retry_backoff_initial_seconds` | 5s | 5s | -- | |
 | `retry_backoff_max_seconds` | 120s | -- | -- | |
 | `max_retries_per_action` | 5 | -- | 10 | |
 | `monday_calls_per_minute` | 10 | -- | 30 | |
 
-Floor and ceiling enforcement happens in `__post_init__`. When a value is clamped, `structlog` emits a `rate_limiter.floor_enforced` warning that includes the parameter name, the requested value, and the enforced value. This makes misconfigured values visible in the structlog output at startup.
+Floor and ceiling enforcement happens in `__post_init__`. When a value is clamped, `structlog` emits a `rate_limiter.ceiling_enforced` warning that includes the parameter name, the requested value, and the enforced value. This makes misconfigured values visible in the structlog output at startup.
 
 **Token bucket algorithm:**
 
@@ -488,8 +486,6 @@ All guardrail configuration lives in `config/agent.yaml`. The table below maps e
 
 | Key | Component | Default | Floor | Ceiling | Notes |
 |---|---|---|---|---|---|
-| `min_page_delay_seconds` | `RateLimitConfig` | `0.3` | `0.3s` | -- | No runtime consumer since v0.8.0. Tracked for removal in v0.8.1. |
-| `max_pages_per_minute` | `RateLimitConfig` | `15` | -- | `20` | |
 | `cooldown_between_operators_seconds` | `RateLimitConfig` | `10` | `5s` | -- | |
 | `retry_backoff_initial_seconds` | `RateLimitConfig` | `5` | `5s` | -- | |
 | `retry_backoff_max_seconds` | `RateLimitConfig` | `120` | -- | -- | |
@@ -560,7 +556,7 @@ What happens when a guardrail component itself fails, rather than catching a pol
 | Non-Negotiable | Enforcing File(s) | Mechanism |
 |---|---|---|
 | **#1 Client data safety** -- outputs strictly scoped to single operator | `audit_logger.py` | `set_output_dir()` raises `RuntimeError` if a file is already open. Orchestrator must call `clear_output()` between operators. Silent auto-close is explicitly refused. |
-| **#2 Platform safety** -- read-only, minimum delay between requests | `rate_limiter.py` | Hard floor on `min_page_delay_seconds` (0.3s for API, previously 1.5s for browser). Singleton ensures all callers share the same bucket. `acquire()` always waits. |
+| **#2 Platform safety** -- read-only, minimum delay between requests | `rate_limiter.py` | Concurrent API execution gated by `semaphore_size` in the orchestrator. Monday.com calls rate-limited via the MONDAY bucket. Singleton ensures all callers share the same limiter. `acquire()` always waits. |
 | **#3 Accuracy** -- deterministic, ambiguity returns INCONCLUSIVE | `security_gate.py` | Startup gate blocks runs where credentials are missing or telemetry is enabled. Prevents runs that could produce unreliable or unauditable results. |
 | **#4 Completeness** -- no silent omissions | `audit_logger.py`, `static_analysis.py` | Every action logged. `close()` warns if buffered events were never written. Static analysis catches code patterns that could introduce silent failures. |
 | **#5 Transparency** -- every action logged | `audit_logger.py`, `log_sanitizer.py` | JSON Lines audit trail, one file per operator cycle. `log_sanitizer.py` scrubs credentials so logging can be unconditional without leaking secrets. |
@@ -585,7 +581,7 @@ What happens when a guardrail component itself fails, rather than catching a pol
 
 **Mocking strategy:** `time.monotonic` is monkeypatched to a controllable float so tests advance time without real sleeps. `asyncio.sleep` is patched with `AsyncMock` whose `side_effect` advances the fake clock. This allows floor enforcement tests to verify the exact clamped values and bucket tests to verify exact wait durations without wall-clock dependency.
 
-**Coverage:** Floors: `min_page_delay_seconds` (0.3s), `cooldown_between_operators_seconds` (5s), `retry_backoff_initial_seconds` (5s). Ceilings: `max_pages_per_minute` (20), `max_retries_per_action` (10), `monday_calls_per_minute` (30). `autouse` fixture calls `reset_limiter()` before and after each test to prevent singleton state from leaking between tests.
+**Coverage:** Floors: `cooldown_between_operators_seconds` (5s), `retry_backoff_initial_seconds` (5s). Ceilings: `max_retries_per_action` (10), `monday_calls_per_minute` (30). `autouse` fixture calls `reset_limiter()` before and after each test to prevent singleton state from leaking between tests.
 
 ### `tests/guardrails/test_audit_logger.py`
 
