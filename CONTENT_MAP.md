@@ -57,6 +57,7 @@ Third person, present tense. Written for an engineer who knows Python but has ne
 | roadmap.md | Roadmap | 8 | -- | guide | All | wiki-guide | background, results, trend-board |
 | guardrails.md | Guardrails | 9 | -- | guide | All | wiki-guide | how-it-works, technical/guardrails |
 | glossary.md | Glossary | 10 | -- | guide | All | wiki-guide | scoring, checks |
+| version-history.md | Version History | 11 | -- | guide | All | wiki-guide | roadmap, glossary |
 
 ### Tier 1: Category Sub-Pages
 
@@ -116,3 +117,4 @@ Tracks which pages exist and are current. Updated by wiki-sweep.
 | technical/monday-integration.md | Exists | 2026-04-10 |
 | guardrails.md | Exists | 2026-04-12 |
 | technical/guardrails.md | Exists | 2026-04-12 |
+| version-history.md | Exists | 2026-04-14 |
