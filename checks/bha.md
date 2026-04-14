@@ -6,6 +6,9 @@ nav_order: 1
 ---
 
 # BHA (Bottom Hole Assembly)
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 5 (highest)** -- BHA data is among the most operationally critical information on the platform. An accurate, complete BHA record is essential for drilling optimization, failure analysis, and regulatory compliance.

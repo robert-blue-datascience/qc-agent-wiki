@@ -6,6 +6,9 @@ nav_order: 5
 ---
 
 # Engineering
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 2** -- Engineering documents represent the pre-drill planning work that guides operations. While essential for well planning, these documents are typically established before drilling begins and change less frequently than operational data, which is reflected in the lower weight.

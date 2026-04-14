@@ -6,6 +6,8 @@ nav_order: 6
 
 # Results & Impact
 
+*Last updated: 2026-04-13*
+
 This page compares the manual QC process to the automated agent, showing the concrete process improvements the automation delivers.
 
 ---
@@ -138,7 +140,3 @@ The path from manual process to automated agent was iterative:
 4. **Remove the bottleneck.** With a reliable foundation in place, concurrent execution reduced per-well time from ~107 seconds to ~1 second -- a change that transforms what is possible in terms of frequency and scope.
 
 This cycle -- build, validate, identify limits, improve -- reflects the iterative approach that continues to guide the project's development.
-
----
-
-*Last updated: 2026-04-13*

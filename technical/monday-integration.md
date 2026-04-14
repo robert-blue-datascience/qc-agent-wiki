@@ -7,9 +7,9 @@ nav_order: 6
 
 # Monday.com Integration
 
-The Monday.com integration is the final step of every QC run: once all 29 checks have been evaluated and scores computed, the agent publishes those results to the live operations board that account managers and field staff use daily. It is the only place where QC data becomes visible outside the agent's local run directory. For a non-technical explanation of what those scores mean and how they are interpreted, see [Results and Impact](../results).
+*Last updated: 2026-04-10*
 
-Last updated: 2026-04-10
+The Monday.com integration is the final step of every QC run: once all 29 checks have been evaluated and scores computed, the agent publishes those results to the live operations board that account managers and field staff use daily. It is the only place where QC data becomes visible outside the agent's local run directory. For a non-technical explanation of what those scores mean and how they are interpreted, see [Results and Impact](../results).
 
 ---
 

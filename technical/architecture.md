@@ -7,9 +7,9 @@ nav_order: 2
 
 # System Architecture
 
-This module documents the QC Automation Agent's four-layer architecture, the API migration strategy, and the security posture. For a non-technical overview of how the agent works, see the [How It Works](../how-it-works) guide.
+*Last updated: 2026-04-07*
 
-Last updated: 2026-04-07
+This module documents the QC Automation Agent's four-layer architecture, the API migration strategy, and the security posture. For a non-technical overview of how the agent works, see the [How It Works](../how-it-works) guide.
 
 ---
 

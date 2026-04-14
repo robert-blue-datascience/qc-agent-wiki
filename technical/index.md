@@ -7,6 +7,8 @@ has_children: true
 
 # Technical Reference
 
+*Last updated: 2026-04-07*
+
 This section is written for technical contributors who need to understand the agent's internals: how it is built, how the layers connect, and how to modify or extend it. It assumes familiarity with Python, async patterns, and REST APIs.
 
 For a non-technical overview of what the agent does and why, start with the [Program Guide](../index).

@@ -6,6 +6,8 @@ nav_order: 9
 
 # Guardrails
 
+*Last updated: 2026-04-12*
+
 The QC Automation Agent includes a set of built-in safety controls called guardrails. These controls protect the cloud platform from excessive load, enforce strict boundaries around operator data, ensure credentials never appear in log files, and prevent the agent from starting in an unsafe or misconfigured state. They run automatically on every execution and cannot be bypassed.
 
 This page explains what each guardrail does, why it exists, and what happens when it activates. For the technical implementation, see the [Guardrails Technical Reference](technical/guardrails).

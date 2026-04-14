@@ -6,6 +6,9 @@ nav_order: 2
 ---
 
 # Trajectory and Anti-Collision
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 5 (highest)** -- Trajectory data tells the team where the wellbore is and where it is going. Accurate survey data and well plans are fundamental to safe, efficient directional drilling and collision avoidance.

@@ -6,6 +6,9 @@ nav_order: 6
 ---
 
 # Tool Inventory and Tracking
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 2** -- Tool inventory data tracks the equipment assigned to the rig. While important for asset management and logistics, tool inventory changes less frequently than operational drilling data, which is reflected in its weight.

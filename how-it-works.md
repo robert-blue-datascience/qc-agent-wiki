@@ -6,6 +6,8 @@ nav_order: 3
 
 # How It Works
 
+*Last updated: 2026-04-07*
+
 The QC Automation Agent follows a structured sequence every time it runs. This page walks through that sequence step by step, from the moment a run is started to the moment scores appear on the QC tracking board.
 
 ---

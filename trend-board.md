@@ -6,6 +6,8 @@ nav_order: 7
 
 # QC Trend Board
 
+*Last updated: 2026-04-07*
+
 {: .coming_soon }
 This feature is on the roadmap and is not yet built. This page describes the intended purpose and design direction.
 

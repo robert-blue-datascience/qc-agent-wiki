@@ -6,6 +6,8 @@ nav_order: 5
 
 # Scoring
 
+*Last updated: 2026-04-07*
+
 The QC Automation Agent uses a two-step weighted scoring system to convert individual check results into a single quality score per operator. This page explains how that scoring works so anyone reviewing the QC board can interpret the numbers.
 
 ---

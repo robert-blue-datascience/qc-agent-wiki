@@ -7,6 +7,8 @@ has_children: true
 
 # The 29 Checks
 
+*Last updated: 2026-04-07*
+
 The QC Automation Agent evaluates 29 distinct checks for every well it processes. Each check asks a specific question about a well's data: Is a particular record present? Is it complete? Is it current? The answer to each question is always one of five results: YES, NO, PARTIAL, N/A, or INCONCLUSIVE.
 
 The checks are organized into 7 scoring categories, each reflecting a different area of drilling data management. Categories that represent more operationally critical data carry greater weight in the overall score.

@@ -7,9 +7,9 @@ nav_order: 4
 
 # Orchestrator
 
-The orchestrator is the control center of the QC Agent. It sequences the 29 QC checks for every well in the input CSV, routes data through the API layer, feeds results into the rule engine, and triggers reporting and Monday.com publishing. For a non-technical overview of the full workflow, see [How It Works](../how-it-works). For the four-layer design and how the orchestrator relates to the API and rules layers, see [Architecture](architecture).
+*Last updated: 2026-04-10*
 
-Last updated: 2026-04-10
+The orchestrator is the control center of the QC Agent. It sequences the 29 QC checks for every well in the input CSV, routes data through the API layer, feeds results into the rule engine, and triggers reporting and Monday.com publishing. For a non-technical overview of the full workflow, see [How It Works](../how-it-works). For the four-layer design and how the orchestrator relates to the API and rules layers, see [Architecture](architecture).
 
 ---
 

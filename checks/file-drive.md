@@ -6,6 +6,9 @@ nav_order: 7
 ---
 
 # File Drive (Document Management)
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 1 (lowest)** -- File Drive checks verify that supporting documents have been uploaded to the platform's document management area. These are supplementary to the structured data checked in other categories, which is why this category carries the lowest weight.

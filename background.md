@@ -6,6 +6,8 @@ nav_order: 2
 
 # Background
 
+*Last updated: 2026-04-07*
+
 The QC Automation Agent grew out of a real operational need: the manual quality control process for drilling data could not keep pace with the size of the portfolio it was responsible for. This page describes how that process worked, what its limitations were, and how the agent evolved into its current form.
 
 ---

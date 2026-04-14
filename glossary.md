@@ -6,6 +6,8 @@ nav_order: 10
 
 # Glossary
 
+*Last updated: 2026-04-10*
+
 Terms used across the QC Automation Agent wiki, organized alphabetically. Domain terms are used freely throughout the documentation since the audience has oil and gas experience; this glossary provides definitions for readers who need a refresher or encounter unfamiliar project-specific and technical terms.
 
 ---

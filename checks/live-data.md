@@ -6,6 +6,9 @@ nav_order: 3
 ---
 
 # Live Data
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 4** -- Live data connections provide real-time visibility into drilling operations. An active, current data feed means the team can monitor what is happening at the rig right now, rather than waiting for reports.

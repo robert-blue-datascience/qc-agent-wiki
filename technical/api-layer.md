@@ -7,9 +7,9 @@ nav_order: 1
 
 # API Layer
 
-The API layer is the data retrieval engine for the QC Automation Agent. It is responsible for authenticating with the AI Driller Cloud platform, fetching well data across 25 endpoints, and translating raw JSON responses into the flat dictionaries the rule engine expects. For a non-technical explanation of what data the agent collects and why, see the [How It Works](../how-it-works) guide.
+*Last updated: 2026-04-10*
 
-Last updated: 2026-04-10
+The API layer is the data retrieval engine for the QC Automation Agent. It is responsible for authenticating with the AI Driller Cloud platform, fetching well data across 25 endpoints, and translating raw JSON responses into the flat dictionaries the rule engine expects. For a non-technical explanation of what data the agent collects and why, see the [How It Works](../how-it-works) guide.
 
 ---
 

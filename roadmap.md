@@ -6,6 +6,8 @@ nav_order: 8
 
 # Roadmap
 
+*Last updated: 2026-04-13*
+
 This page outlines where the QC Automation Agent has been and where it is going. Milestones are listed in order of completion, followed by current and future work.
 
 ---
@@ -68,5 +70,3 @@ Moving from scheduled runs to continuous monitoring with anomaly detection. Rath
 
 {: .note }
 This roadmap describes the project's direction, not a fixed timeline. Priorities may shift based on business needs, and items may be reordered or adjusted as the project evolves.
-
-*Last updated: 2026-04-13*

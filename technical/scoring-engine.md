@@ -7,6 +7,8 @@ nav_order: 5
 
 # Scoring Engine
 
+*Last updated: 2026-04-07*
+
 The scoring engine converts per-check evaluation results into a single 0-100 QC score for each well, then aggregates those well scores into an operator-level score. It is the authoritative implementation of the scoring method described in [Scoring](../scoring). All score computation happens in `src/reporter/score_calculator.py`.
 
 ---
@@ -369,5 +371,3 @@ python -m pytest tests/reporter/test_score_calculator.py::test_cousin_eddy_repro
 ```
 
 ---
-
-*Last updated: 2026-04-07*

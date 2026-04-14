@@ -7,9 +7,9 @@ nav_order: 7
 
 # Guardrails
 
-The guardrails system is the security and observability foundation of the QC Automation Agent. It ensures every run is safe, auditable, and impossible to misconfigure in ways that could harm the platform, leak credentials, or produce silent incorrect results. For the non-technical overview, see the [Guardrails](../guardrails) guide.
+*Last updated: 2026-04-12*
 
-Last updated: 2026-04-12
+The guardrails system is the security and observability foundation of the QC Automation Agent. It ensures every run is safe, auditable, and impossible to misconfigure in ways that could harm the platform, leak credentials, or produce silent incorrect results. For the non-technical overview, see the [Guardrails](../guardrails) guide.
 
 ---
 

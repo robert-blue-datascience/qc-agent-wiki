@@ -6,6 +6,9 @@ nav_order: 4
 ---
 
 # Drilling Reports
+
+*Last updated: 2026-04-07*
+
 {: .text-purple-200}
 
 **Category weight: 3** -- Drilling reports are the daily operational record of what happened at the well. Timely, complete reporting keeps the entire team informed and provides the documentation needed for post-well analysis.

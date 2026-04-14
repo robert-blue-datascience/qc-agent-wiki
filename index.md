@@ -6,6 +6,8 @@ nav_order: 1
 
 # QC Automation Agent
 
+*Last updated: 2026-04-07*
+
 The QC Automation Agent is a software system that automatically inspects drilling data quality across an entire portfolio of active wells. It checks 29 data modules for every well, computes weighted quality scores by operator, and publishes the results to a centralized tracking board. The agent replaces a manual inspection process that was time-consuming, inconsistent, and limited in how often it could run.
 
 ---

@@ -7,9 +7,9 @@ nav_order: 3
 
 # Rule Engine
 
-The rule engine is the decision layer of the QC Automation Agent. It receives structured data extracted from the AI Driller Cloud platform, applies deterministic rules to each of the [29 checks](../checks), and returns a typed result for every module evaluated. For a full description of what each check measures and why it matters, see the [Checks reference](../checks).
+*Last updated: 2026-04-07*
 
-Last updated: 2026-04-08
+The rule engine is the decision layer of the QC Automation Agent. It receives structured data extracted from the AI Driller Cloud platform, applies deterministic rules to each of the [29 checks](../checks), and returns a typed result for every module evaluated. For a full description of what each check measures and why it matters, see the [Checks reference](../checks).
 
 ---
 
