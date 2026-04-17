@@ -6,7 +6,7 @@ nav_order: 5
 
 # Scoring
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-16*
 
 The QC Automation Agent uses a two-step weighted scoring system to convert individual check results into a single quality score per operator. This page explains how that scoring works so anyone reviewing the QC board can interpret the numbers.
 
@@ -170,10 +170,31 @@ These are general interpretations, not hard pass/fail thresholds. The appropriat
 
 ## Reading the QC Board
 
-The Monday.com QC board displays one row per operator with the following information:
+The Monday.com QC board displays one summary row per operator with the following information:
 
-- **Agent Score** -- The overall weighted score (the number calculated above)
-- **Per-check status columns** -- Individual result for each of the 29 checks across all wells for that operator
-- **Metadata** -- Operator name, number of wells, last run timestamp
+- **Agent Score** -- The overall weighted score for the operator's most recent run (the number calculated above)
+- **Well Count** -- The number of wells evaluated in that run
+- **Last Run** -- The date the most recent score was published
+- **Dashboard Link** -- A direct link to the operator's full results
 
-The agent only updates columns where the score has changed since the last run, making it easy to see which operators' data quality has improved or declined.
+Each run overwrites the operator's existing row with the latest score. Per-well check results are retained in the underlying database record for historical reference and trend analysis.
+
+---
+
+## Historical Mode Scoring
+
+When the agent evaluates completed wells -- those that have finished drilling and are no longer active -- a different scoring configuration applies. Completed wells have no live data streams, so checks tied to real-time feeds are excluded. Three categories apply in historical mode:
+
+| Category | Weight | Rationale |
+|---|---|---|
+| **BHA** | 5 | BHA records remain as important for completed wells as for active ones. |
+| **Trajectory and Anti-Collision** | 5 | Survey data and surface location anchor the permanent directional record of the well. |
+| **Supporting Data** | 3 | Mud reports, formation tops, and wellbore diagrams round out the historical record. |
+
+Historical mode uses 13 checks across these three categories. Live data, tool inventory, file drive, and several other active-mode checks are excluded because they are not applicable to wells that have finished drilling. Check 30 (Location) -- which verifies the well's recorded surface coordinates -- is included in historical mode only.
+
+Scores for completed wells follow the same numeric scale (0.0 to 1.0) and the same result types (YES, NO, PARTIAL, N/A, INCONCLUSIVE) as active well scoring.
+
+---
+
+*For definitions of scoring terms, see the [Glossary](glossary). For the full list of what gets checked, see [The 29 Checks](checks). For how scores translate to operational impact, see [Results & Impact](results).*

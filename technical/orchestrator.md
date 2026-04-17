@@ -7,9 +7,9 @@ nav_order: 4
 
 # Orchestrator
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-04-16*
 
-The orchestrator is the control center of the QC Agent. It sequences the 29 QC checks for every well in the input CSV, routes data through the API layer, feeds results into the rule engine, and triggers reporting and Monday.com publishing. For a non-technical overview of the full workflow, see [How It Works](../how-it-works). For the four-layer design and how the orchestrator relates to the API and rules layers, see [Architecture](architecture).
+The orchestrator is the control center of the QC Agent. It discovers wells via the search API, sequences the QC checks for every well, routes data through the API layer, feeds results into the rule engine, and triggers reporting and publishing. For a non-technical overview of the full workflow, see [How It Works](../how-it-works). For the four-layer design and how the orchestrator relates to the API and rules layers, see [Architecture](architecture).
 
 ---
 
@@ -18,10 +18,10 @@ The orchestrator is the control center of the QC Agent. It sequences the 29 QC c
 The orchestrator implements a deterministic, multi-well state machine. Its responsibilities are:
 
 1. Validate the security environment before touching any data.
-2. Parse the input CSV and build an ordered well queue.
-3. Resolve each well's UUID from the API, then execute all 29 checks against live API data.
+2. Discover active wells for the target operator via the search API.
+3. Resolve each well's full detail from the API, then execute all checks against live API data.
 4. Accumulate per-well results and compute QC scores.
-5. Write JSON reports and publish to Monday.com.
+5. Write JSON reports, publish to Supabase (score-of-record), and publish to Monday.com (operator summary).
 
 LangGraph was chosen over a plain `asyncio` loop for two reasons. First, it provides a formal state schema (`QCAgentState`) with a clear contract about what data exists at each stage of execution -- this eliminates the class of bugs caused by nodes reading state that has not yet been written. Second, the conditional edge system makes loop control (process next check vs. move to next well vs. report) an explicit, testable part of the graph definition rather than buried control flow inside node functions.
 
@@ -31,7 +31,7 @@ LangGraph was chosen over a plain `asyncio` loop for two reasons. First, it prov
 
 ```mermaid
 flowchart TD
-    A([security_gate]):::primary --> B([load_csv]):::primary
+    A([security_gate]):::primary --> B([discover_wells]):::primary
     B --> C([initialize_run]):::primary
     C --> D([select_well]):::primary
 
@@ -44,9 +44,10 @@ flowchart TD
     F -->|well_queue not empty| D
     F -->|well_queue empty| G([generate_report]):::output
 
-    G --> H([publish_results]):::output
-    H --> I([cleanup]):::success
-    I --> J([END]):::decision
+    G --> H([publish_supabase]):::output
+    H --> I([publish_monday]):::output
+    I --> J([cleanup]):::success
+    J --> K([END]):::decision
 
     classDef primary fill:#4a90d9,color:#fff
     classDef processing fill:#e8a838,color:#fff
@@ -62,7 +63,7 @@ The graph has three conditional edges:
 - **After `process_check`**: loops back to `process_check` if checks remain in the queue, otherwise routes to `save_well_results`.
 - **After `save_well_results`**: loops back to `select_well` if more wells remain in the queue, otherwise routes to `generate_report`.
 
-The three linear tails (`generate_report -> publish_results -> cleanup -> END`) always execute once per operator invocation.
+The linear tail (`generate_report -> publish_supabase -> publish_monday -> cleanup -> END`) always executes once per operator invocation.
 
 ---
 
@@ -86,17 +87,11 @@ This also means that live resources survive across well iterations without being
 
 `resource_cache` is a mutable dict on `QCAgentGraph` that stores API responses within a single well. Multiple checks share endpoints: `get_bha_list` is called by checks 10, 11, 12, 13, 14, and 15, for example. Without caching, each check would make a redundant network call.
 
-The cache is cleared in `save_well_results_node` via `resource_cache.clear()` (nodes.py line 1007). This is Non-Negotiable #1: no cross-well data contamination. If the cache were not cleared, BHA data from Well A would be visible during Well B's check execution. The `is not None` check pattern is used throughout (not `or {}`) to distinguish "no cache" from "cache exists but is empty" -- the latter would otherwise silently create a new dict and break cache sharing.
-
-### Callback pattern for the well search cache
-
-The full well list from `get_well_search()` returns 17k+ wells and changes only when rigs are added or removed. Fetching it once per well would be wasteful. But the list cannot be stored in `QCAgentState` without bloating every state snapshot LangGraph manages.
-
-The solution is a callback: `select_well_node` accepts an optional `well_search_cache: list | None` and an `on_cache_update` callable. On the first well, `well_search_cache` is `None`; the node calls `get_well_search()`, then calls `on_cache_update(wells)` which sets `self._well_search_cache` on the graph instance. On subsequent wells, `well_search_cache` is populated and no network call is needed. The callback pattern keeps the cache storage entirely outside LangGraph state while giving `select_well_node` a clean, testable interface.
+The cache is cleared in `save_well_results_node` via `resource_cache.clear()`. This is Non-Negotiable #1: no cross-well data contamination. If the cache were not cleared, BHA data from Well A would be visible during Well B's check execution. The `is not None` check pattern is used throughout (not `or {}`) to distinguish "no cache" from "cache exists but is empty" -- the latter would otherwise silently create a new dict and break cache sharing.
 
 ### INCONCLUSIVE per check, not run-abort on API failure
 
-The browser era had a `browser_dead` flag because a Playwright crash corrupted all subsequent extractions -- the failure mode was contagious. API failures are stateless and isolated: a timeout on one endpoint does not affect subsequent calls. When any API fetch or adapter call raises an exception, `_process_check_api` catches it, logs `API_FETCH_FAILURE` with the error type and message, and returns an `INCONCLUSIVE` result for that check. The run continues. This behavior is implemented in nodes.py lines 849-859. The `browser_dead` routing logic was removed in v0.7.0.
+API failures are stateless and isolated: a timeout on one endpoint does not affect subsequent calls. When any API fetch or adapter call raises an exception, `_process_check_api` catches it, logs `API_FETCH_FAILURE` with the error type and message, and returns an `INCONCLUSIVE` result for that check. The run continues. This behavior is implemented in `nodes.py`. The browser-era `browser_dead` routing logic was removed in v0.7.0.
 
 ---
 
@@ -106,34 +101,39 @@ The browser era had a `browser_dead` flag because a Playwright crash corrupted a
 
 | Field | Type | Set by | Purpose |
 |---|---|---|---|
-| `csv_path` | `str` | `run()` entry | Path to the input CSV manifest |
-| `target_well` | `str \| None` | `run()` entry | Specific well name for `--well` mode; `None` otherwise |
-| `target_checks` | `list[int] \| None` | `run()` entry | Check numbers from `--checks` CLI arg; `None` = all 29 |
+| `target_well` | `str \| None` | `run()` entry | Specific well UUID for `--well` mode; `None` otherwise |
+| `target_checks` | `list[int] \| None` | `run()` entry | Check numbers from `--checks` CLI arg; `None` = all checks |
 | `mode` | `str` | `run()` entry | `"well"`, `"first"`, or `"all"` |
-| `target_operator` | `str \| None` | `run_all()` | Which operator this graph invocation handles in `--all` mode |
-| `well_name` | `str` | `load_csv_node`, `select_well_node` | Current well under evaluation |
-| `operator` | `str` | `load_csv_node` | Operator name for the well queue; scopes all output |
-| `rig` | `str` | `load_csv_node`, `select_well_node` | Rig name from CSV |
-| `basin` | `str` | `load_csv_node`, `select_well_node` | Basin from CSV; injected into `extracted_data` for timezone-aware checks |
-| `well_queue` | `list[dict]` | `load_csv_node`; consumed by `select_well_node` | Remaining wells to process; each entry is `{well_name, rig, basin}` |
-| `completed_wells` | `list[dict]` | `save_well_results_node` | Accumulated results; each entry is `{well_name, rig, check_results, timing_seconds}` |
-| `unreachable_wells` | `list[str]` | `select_well_node` | Well names that could not be resolved to a UUID |
-| `well_uuid` | `str \| None` | `select_well_node` | Platform UUID for the current well; used by API calls |
+| `run_mode` | `str` | `run()` entry | `"active"` or `"historical"` |
+| `operator_id` | `str` | `run()` entry | Operator UUID from whitelist; `None` signals ad-hoc `--well` run |
+| `target_operator` | `str \| None` | `run_all()` | Which operator this graph invocation handles |
+| `wells_discovered` | `int` | `discover_wells_node` | Search count pre-flight result |
+| `whitelist_status_ids` | `list[int]` | `discover_wells_node` | Status IDs used for discovery; used for mismatch detection |
+| `spud_date` | `str \| None` | `select_well_node` | From search response; `None` for `--well` mode |
+| `status_name` | `str \| None` | `select_well_node` | Well status string from search response |
+| `well_name` | `str` | `select_well_node` | Current well under evaluation |
+| `operator` | `str` | `discover_wells_node` | Operator name; scopes all output |
+| `rig` | `str` | `select_well_node` | Rig name from search response |
+| `basin` | `str` | `select_well_node` | Basin; injected into `extracted_data` for timezone-aware checks |
+| `well_queue` | `list[dict]` | `discover_wells_node`; consumed by `select_well_node` | Remaining wells to process |
+| `completed_wells` | `list[dict]` | `save_well_results_node` | Accumulated results per well |
+| `unreachable_wells` | `list[str]` | `select_well_node` | Well names that could not be resolved |
+| `well_uuid` | `str \| None` | `select_well_node` | Platform UUID for the current well |
 | `check_queue` | `list[dict]` | `initialize_run_node`; consumed by `process_check_node` | Ordered list of YAML check configs to run |
-| `full_check_queue` | `list[dict]` | `initialize_run_node` | Unfiltered check queue; used by `generate_report_node` for coverage calculations |
-| `checks_queued` | `int` | `initialize_run_node` | Total checks in queue after `--checks` filtering; used by report |
+| `full_check_queue` | `list[dict]` | `initialize_run_node` | Unfiltered check queue; used by `generate_report_node` |
+| `checks_queued` | `int` | `initialize_run_node` | Total checks in queue after filtering |
 | `current_module_key` | `str \| None` | `save_well_results_node` | Reset to `None` between wells |
 | `check_results` | `dict[str, dict]` | `process_check_node` | Map of `check_name -> result_dict`; cleared between wells |
 | `run_id` | `str` | `initialize_run_node` | UUID for the run; written to report |
 | `run_timestamp` | `str` | `initialize_run_node` | ISO 8601 UTC timestamp of run start |
-| `run_dir` | `str` | `initialize_run_node` | Output directory path (e.g., `runs/20260407_Acme_Oil/`) |
-| `well_start_time` | `float \| None` | `select_well_node` | `time.time()` when the current well started; cleared by `save_well_results_node` |
-| `run_start_time` | `float \| None` | `load_csv_node` | `time.time()` when the run started; used for total duration |
-| `login_success` | `bool` | (removed) | No longer written; browser login path removed in v0.7.0 |
+| `run_dir` | `str` | `initialize_run_node` | Output directory path |
+| `owns_audit_logger` | `bool` | `initialize_run_node` | `True` when this node opened the audit log file (vs. `run_all()`) |
+| `well_start_time` | `float \| None` | `select_well_node` | `time.time()` when the current well started |
+| `run_start_time` | `float \| None` | `initialize_run_node` | `time.time()` when the run started |
 | `well_found` | `bool` | `select_well_node` | Controls routing after `select_well` |
-| `browser_dead` | `bool` | (removed) | No longer written; browser layer removed in v0.7.0 |
-| `no_publish` | `bool` | `run()` entry | If `True`, `publish_results_node` skips Monday.com |
-| `force_publish` | `bool` | `run()` entry | If `True`, bypasses delta detection in `MondayClient` |
+| `no_publish` | `bool` | `run()` entry | If `True`, `publish_monday_node` skips Monday.com |
+| `force_publish` | `bool` | `run()` entry | If `True`, bypasses delta detection |
+| `circuit_breaker_aborted` | `bool` | `process_check_node` | `True` if per-well circuit breaker tripped |
 | `errors` | `list[dict]` | `initialize_run_node` | Non-fatal error accumulator; written to report |
 
 ---
@@ -150,25 +150,21 @@ Calls `guardrails/security_gate.py:run_gate()`, which verifies the security poli
 
 ---
 
-### Node 2: `load_csv_node`
+### Node 2: `discover_wells_node`
 
-Parses the input CSV using `csv_parser.parse_csv()` and builds the well queue. Supports three modes:
+Discovers active wells for the target operator via the search API. Reads operator config from the whitelist, runs a `search_count` pre-flight check against the discovery ceiling, optionally compares against the previous run via Supabase, then runs the full well search to build `well_queue`.
 
-- `--well`: queue of one specific well (matched by name)
-- `--first`: queue of one well (first row of CSV)
-- `--all`: all wells for `target_operator`
+For `--well <uuid>` mode, the queue is pre-populated before graph invocation and this node is a no-op.
 
-If the target well is not found in the CSV, raises `ValueError`. Rejected rows (empty required fields) are collected in `ParseResult.rejected_rows` and logged but do not stop the run.
-
-- **Reads**: `csv_path`, `target_well`, `mode`, `target_operator`
-- **Writes**: `well_name`, `operator`, `rig`, `basin`, `well_queue`, `completed_wells`, `unreachable_wells`, `run_start_time`
-- **Errors**: raises `ValueError` for missing target well; raises `CSVParseError` for structural problems (missing file, missing columns)
+- **Reads**: `target_operator`, `well_queue` (pre-populated check), `run_mode`
+- **Writes**: `well_queue`, `operator`, `operator_id`, `wells_discovered`, `whitelist_status_ids`
+- **Errors**: API failures logged; empty result still proceeds (zero-well run)
 
 ---
 
 ### Node 3: `initialize_run_node`
 
-Generates run metadata (UUID, timestamp, output directory), builds the ordered check queue from YAML configs in `config/modules/`, applies any `--checks` filter, and calls `engine.start_well()`.
+Generates run metadata (UUID, timestamp, output directory), opens the audit log file (when not owned by `run_all()`), builds the ordered check queue from YAML configs in `config/modules/`, applies any `--checks` filter, and calls `engine.start_well()`.
 
 Check queue ordering rules (enforced by `_build_check_queue`):
 1. Check 1 (WITSML Connected, `module_key=null`) is placed first unconditionally.
@@ -177,18 +173,20 @@ Check queue ordering rules (enforced by `_build_check_queue`):
 
 When `--checks` is used, `_filter_check_queue` adds any undeclared dependencies automatically and logs `CHECK_DEPENDENCY_AUTO_INCLUDED` for each auto-inclusion.
 
-- **Reads**: `operator`, `well_name`, `target_checks`, `mode`, `run_dir` (for `--all` mode)
-- **Writes**: `run_id`, `run_timestamp`, `run_dir`, `check_queue`, `full_check_queue`, `checks_queued`, `check_results`, `current_module_key`, `errors`
+- **Reads**: `operator`, `well_name`, `target_checks`, `mode`, `run_dir` (pre-set only in `run_all()`)
+- **Writes**: `run_id`, `run_timestamp`, `run_dir`, `owns_audit_logger`, `check_queue`, `full_check_queue`, `checks_queued`, `check_results`, `current_module_key`, `errors`
 - **Errors**: raises `FileNotFoundError` if `config/modules/` is missing
 
 ---
 
 ### Node 4: `select_well_node`
 
-Pops the first well from `well_queue` and resolves its platform UUID from the API well search endpoint. Uses a run-level cache (callback pattern -- see Design Decisions) to avoid calling `get_well_search()` more than once per run. If the API call raises or the well name does not appear in the search results, the well is added to `unreachable_wells` and `well_found` is set to `False`, which routes to `save_well_results` (skipping `process_check`).
+Pops the first well from `well_queue` and fetches well detail via the API. If the API call raises or the well is unreachable, it is added to `unreachable_wells` and `well_found` is set to `False`, routing to `save_well_results` (skipping `process_check`).
 
-- **Reads**: `well_queue`, `unreachable_wells`
-- **Writes**: `well_name`, `rig`, `basin`, `well_uuid`, `well_found`, `well_queue` (remaining), `well_start_time`
+Also detects status mismatches: if the well detail's `status_id` does not match the whitelist status IDs used for discovery, logs `WELL_STATUS_MISMATCH`.
+
+- **Reads**: `well_queue`, `unreachable_wells`, `whitelist_status_ids`
+- **Writes**: `well_name`, `rig`, `basin`, `spud_date`, `status_name`, `well_uuid`, `well_found`, `well_queue` (remaining), `well_start_time`
 - **Errors**: caught internally; API errors become `well_found=False`, logged as `API_WELL_RESOLUTION_FAILED`
 
 ---
@@ -216,11 +214,11 @@ Any exception produces `INCONCLUSIVE` for that check. The remaining checks are n
 
 **Request coalescing:** When two checks need the same API endpoint, only one fetch goes to the network. The second caller waits on a per-endpoint `asyncio.Lock` and reads from `resource_cache` when the first caller completes. The `_FETCH_FAILED` sentinel in the cache distinguishes a failed fetch from a cache miss.
 
-**Wave 2 dependency resolution:** Before each wave 2 check executes, the accumulated results are inspected. If the dependency result is `INCONCLUSIVE`, the dependent check inherits `INCONCLUSIVE` without making any API call. If the dependency condition is met (e.g., Surveys = NO triggers N_A for Survey Corrections), the engine computes the N_A result with an empty `extracted_data` dict.
+**Wave 2 dependency resolution:** Before each wave 2 check executes, the accumulated results are inspected. If the dependency result is `INCONCLUSIVE`, the dependent check inherits `INCONCLUSIVE` without making any API call. If the dependency condition is met, the engine computes the result with an empty `extracted_data` dict.
 
-**Per-well circuit breaker:** `_CircuitBreakerState` tracks consecutive and total timeouts within a single well. When `consecutive_timeout_limit` or `total_timeout_limit` is reached, remaining checks are skipped and `circuit_breaker_aborted=True` is returned. The consecutive count resets on any successful check.
+**Per-well circuit breaker:** `_CircuitBreakerState` tracks consecutive and total timeouts within a single well. When `consecutive_timeout_limit` or `total_timeout_limit` is reached, remaining checks are skipped and `circuit_breaker_aborted=True` is returned.
 
-**Run-level circuit breaker:** The injected `run_cb_state` tracks consecutive aborted wells across the full run. When `consecutive_well_abort_limit` is exceeded, `well_queue` is drained to stop the run. (Architectural note: draining `well_queue` from within a check-execution node is a known design smell tracked in TASKS.md v0.8.1 for refactor into a dedicated routing flag.)
+**Run-level circuit breaker:** The injected `run_cb_state` tracks consecutive aborted wells across the full run. When `consecutive_well_abort_limit` is exceeded, `well_queue` is drained to stop the run.
 
 - **Reads**: `check_queue`, `check_results`, `well_uuid`, `basin`, `well_queue`
 - **Writes**: `check_queue` (emptied), `check_results` (all checks), `circuit_breaker_aborted`, and potentially `well_queue` (drained on run-level trip)
@@ -230,47 +228,53 @@ Any exception produces `INCONCLUSIVE` for that check. The remaining checks are n
 
 ### Node 6: `save_well_results_node`
 
-Saves the current well's results into `completed_wells`, then resets per-well state for the next iteration. Clears `resource_cache` to prevent cross-well data leaks (Non-Negotiable #1). Rebuilds `check_queue` from `full_check_queue` (with `--checks` filter re-applied if needed) so the next well starts with a full queue.
+Saves the current well's results into `completed_wells`, then resets per-well state for the next iteration. Extracts `api_uwi`, `end_date`, and `end_depth` from `resource_cache` before clearing it. Clears `resource_cache` to prevent cross-well data leaks (Non-Negotiable #1). Rebuilds `check_queue` from `full_check_queue` so the next well starts with a full queue.
 
-If `check_results` is empty (the well was unreachable and no checks ran), the entry is not added to `completed_wells` -- the well was already recorded in `unreachable_wells` by `select_well_node`.
+If `check_results` is empty (the well was unreachable and no checks ran), the entry is not added to `completed_wells`.
 
-- **Reads**: `well_name`, `rig`, `check_results`, `well_start_time`, `well_queue`, `full_check_queue`, `target_checks`, `unreachable_wells`
-- **Writes**: `completed_wells`, `unreachable_wells`, `well_queue`, `check_results` (reset to `{}`), `check_queue` (rebuilt), `current_module_key` (reset to `None`), `well_start_time` (reset to `None`)
+- **Reads**: `well_name`, `rig`, `spud_date`, `status_name`, `check_results`, `well_start_time`, `well_queue`, `full_check_queue`, `target_checks`, `unreachable_wells`
+- **Writes**: `completed_wells`, `unreachable_wells`, `well_queue`, `check_results` (reset), `check_queue` (rebuilt), `current_module_key` (reset), `well_start_time` (reset)
 - **Side effects**: `resource_cache.clear()` (mutates the graph instance dict)
 
 ---
 
 ### Node 7: `generate_report_node`
 
-Assembles the JSON run report from `completed_wells`. Delegates scoring to `reporter/score_calculator.py` (`compute_well_score`, `compute_operator_score`) and report construction to `reporter/run_report.py` (`build_run_report`, `write_report`, `write_summary`). Populates timing fields and coverage stats (unreachable wells, manifest size, coverage percentage).
+Assembles the JSON run report from `completed_wells`. Delegates scoring to `reporter/score_calculator.py` and report construction to `reporter/run_report.py`. Populates timing fields and coverage stats.
 
-For multi-well runs, the operator-level score is the average of all well scores. For single-well runs, the well score is used directly.
-
-- **Reads**: `run_id`, `run_timestamp`, `run_dir`, `operator`, `completed_wells`, `unreachable_wells`, `full_check_queue`, `target_checks`, `run_start_time`, `csv_path`
+- **Reads**: `run_id`, `run_timestamp`, `run_dir`, `operator`, `completed_wells`, `unreachable_wells`, `full_check_queue`, `target_checks`, `run_start_time`, `run_mode`
 - **Writes**: `report_path`
-- **Side effects**: writes `qc_report.json` and `summary.txt` to `run_dir`
+- **Side effects**: writes `qc_report.json` to `run_dir`; writes historical CSV for historical runs
 
 ---
 
-### Node 8: `publish_results_node`
+### Node 8: `publish_supabase_node`
 
-Reads the JSON report from disk and publishes to Monday.com via `reporter/monday_client.py`. Skipped if `no_publish` is `True` or `MONDAY_API_TOKEN` is not set. After publishing, updates `monday_status` in the report file with publish statistics (wells published, wells held, wells created, stale flagged).
+Writes per-well results to the Supabase `well_results` table. Runs on every operator run regardless of `no_publish` flag (Supabase is the score-of-record). Skipped only if `SUPABASE_URL` / `SUPABASE_KEY` are not set.
 
-`force_publish=True` bypasses delta detection in `MondayClient` -- every score is written regardless of whether it has changed. This is used to overwrite known-bad scores.
-
-- **Reads**: `no_publish`, `force_publish`, `run_dir`
+- **Reads**: `completed_wells`, `operator`, `operator_id`, `run_dir`, `run_mode`
 - **Writes**: nothing to state (returns `{}`)
-- **Side effects**: Monday.com GraphQL mutations; updates `qc_report.json` on disk
+- **Side effects**: HTTP upserts to Supabase
 
 ---
 
-### Node 9: `cleanup_node`
+### Node 9: `publish_monday_node`
 
-Flushes and closes the audit logger. In `--all` mode, audit logger lifecycle is owned by `run_all()` in `graph.py`, so `cleanup_node` skips `clear_output()` to avoid closing the shared logger mid-run. All operations are wrapped in `try/except` -- cleanup never raises.
+Reads the JSON report and upserts a single operator summary row to the Monday.com summary board. Skipped for historical runs, ad-hoc `--well` runs, `--no-publish` flag, missing API token, or missing board config.
 
-- **Reads**: `mode`
+- **Reads**: `run_mode`, `operator_id`, `no_publish`, `operator`, `completed_wells`, `run_dir`, `run_timestamp`
+- **Writes**: nothing to state (returns `{}`)
+- **Side effects**: Monday.com GraphQL mutations
+
+---
+
+### Node 10: `cleanup_node`
+
+Flushes and closes the audit logger. Skips `clear_output()` when `run_all()` owns the logger lifecycle (signalled by `owns_audit_logger=False`). All operations are wrapped in `try/except` -- cleanup never raises.
+
+- **Reads**: `owns_audit_logger`
 - **Writes**: nothing (returns `{}`)
-- **Side effects**: `audit_logger.clear_output()` (flushes log buffer to disk)
+- **Side effects**: `audit_logger.clear_output()` when `owns_audit_logger=True`
 
 ---
 
@@ -289,7 +293,7 @@ Flushes and closes the audit logger. In `--all` mode, audit logger lifecycle is 
 
 ## API_STRATEGY_MAP
 
-`API_STRATEGY_MAP` (nodes.py lines 84-217) maps YAML extraction strategy names to the API calls and adapter functions needed to evaluate each check.
+`API_STRATEGY_MAP` (nodes.py) maps YAML extraction strategy names to the API calls and adapter functions needed to evaluate each check.
 
 ### Structure of each entry
 
@@ -311,25 +315,11 @@ Flushes and closes the audit logger. In `--all` mode, audit logger lifecycle is 
 | `"per_actual_bha"` | `method(well_uuid, bha_id)` for each Actual BHA | BHA detail data (checks 14, 15) |
 | `"per_actual_bha_id"` | `method(bha_id)` for each Actual BHA | BHA files (check 11/12) |
 
-For `per_actual_bha` and `per_actual_bha_id`, the BHA list must already be in `resource_cache` from an earlier `fetch` entry in the same spec. If it is not (e.g., because `--checks` skipped the `bha_grid` check), the loop over Actual BHAs produces no results and the adapter receives an empty list, which typically evaluates as `NO` or `INCONCLUSIVE`.
-
-### Caching behavior
-
-Cache keys use the format `"{method_name}:{well_uuid}"` for `uuid` arg type, or `"{method_name}:{bha_id}"` for per-BHA calls. On a cache hit, `API_CACHE_HIT` is logged with the check name and method. The cache is cleared by `save_well_results_node` between wells.
-
-### File drive checks (26-29)
-
-The `file_drive` strategy passes `strategy_params["folder_name"]` as a keyword argument to `adapt_file_drive`. Each of the four file drive checks has a different `folder_name` in its YAML `extraction.params`. Without this parameter, the adapter cannot look up the correct folder and will silently return `INCONCLUSIVE`.
-
-### Missing strategy
-
-If a YAML config references a strategy name not in `API_STRATEGY_MAP`, `_process_check_api` logs `UNKNOWN_API_STRATEGY` and returns `INCONCLUSIVE` for that check. The run continues. This is a safety net for configuration errors during development.
-
-### Full strategy map (25 strategies, 29 checks)
+### Full strategy map (25 strategies, 30 checks)
 
 | Strategy | Checks | Primary fetch method | Adapter |
 |---|---|---|---|
-| `witsml_connected` | 1 | `get_well_detail` (cached from well selection) | `adapt_witsml_status` |
+| `witsml_connected` | 1 | `get_well_detail` | `adapt_witsml_status` |
 | `surveys` | 2 | `get_surveys`, `get_well_detail` | `adapt_surveys` |
 | `survey_program` | 3 | `get_survey_program` | `adapt_presence_check` |
 | `survey_corrections` | 4 | `get_surveys` | `adapt_survey_corrections` |
@@ -354,48 +344,13 @@ If a YAML config references a strategy name not in `API_STRATEGY_MAP`, `_process
 | `drilling_program` | 24 | `get_drilling_program` | `adapt_presence_check` |
 | `afe_curves` | 25 | `get_afe_curves` | `adapt_presence_check` |
 | `file_drive` | 26-29 | `get_file_drive_tree` | `adapt_file_drive` |
+| `location` | 30 | `get_well_detail` | `adapt_location` |
 
 ---
 
 ## csv_parser.py
 
-`src/orchestrator/csv_parser.py` is a pure parsing module with no dependencies on the rest of the orchestrator. It uses the `csv` stdlib (no pandas) to stay lightweight.
-
-### What it returns
-
-`parse_csv(path)` returns a `ParseResult` dataclass containing:
-
-- `wells_by_operator`: `dict[str, list[WellRecord]]` -- all accepted wells, keyed by operator name
-- `rejected_rows`: `list[dict]` -- rows with empty required fields; each entry includes `{row, reason, raw}`
-- `warnings`: `list[str]` -- duplicate well+operator combinations (first occurrence kept)
-- `total_rows_read`: `int`
-
-`WellRecord` is a frozen dataclass with fields: `well_name`, `rig`, `operator`, `source_row` (1-based), `basin` (empty string if absent or a missing marker).
-
-### Column normalization
-
-All CSV headers are stripped and lowercased before lookup. Both BI export headers and short names are accepted:
-
-| BI export header | Short header | Internal field |
-|---|---|---|
-| `Well name` | `well_name` | `well_name` |
-| `Rig Name` | `rig` | `rig` |
-| `Operator Name` | `operator` | `operator` |
-| `Basin Name` | `basin` | `basin` |
-
-Extra columns are ignored. BOM characters (`\xef\xbb\xbf`) from Excel exports are stripped via `utf-8-sig` encoding.
-
-### Basin field
-
-`basin` is optional. If the column is absent, `basin` defaults to `""`. If the column is present, values in `MISSING_MARKERS` (`{"-", "n/a", "none", "null", ""}`) are normalized to `""`. The basin value is passed through state and injected into every check's `extracted_data` dict, where timezone-aware rules use it for UTC offset lookups.
-
-### Missing marker handling
-
-Row-level rejections use `CSVParseError` for structural issues (missing file, missing required column header) and `rejected_rows` accumulation for row-level issues (empty required field). The distinction matters: structural errors halt the run before any state is created; row-level rejections are reported but do not stop the run.
-
-### Duplicate detection
-
-Duplicate `(well_name, operator)` pairs generate a warning and the second occurrence is silently dropped. The same well name under different operators is not a duplicate.
+`src/orchestrator/csv_parser.py` is a preserved utility module. It is not called by the v0.9.0+ orchestrator workflow (well discovery is API-driven), but it remains available for offline analysis and is not deleted.
 
 ---
 
@@ -407,7 +362,7 @@ Duplicate `(well_name, operator)` pairs generate a warning and the second occurr
 | **#2 Platform safety** (read-only, rate-limited) | All API calls are GET or read-only POST; rate limiter applied via `APIClient`; no write operations anywhere in the orchestrator |
 | **#3 Accuracy** (deterministic, INCONCLUSIVE not guessed) | All evaluation via `engine.evaluate()`; API failures and timeouts return `INCONCLUSIVE` not a guess; wave 2 dependency check prevents evaluation against INCONCLUSIVE dependency results |
 | **#4 Completeness** (every well, every check) | `well_queue` exhausted before `generate_report`; unreachable wells tracked in `unreachable_wells`; coverage stats written to report |
-| **#5 Transparency** (every action logged) | `security_gate_node`, `load_csv_node`, `initialize_run_node`, `select_well_node`, `process_check_node`, and `save_well_results_node` all produce audit log events at every decision point; all API failures logged before `INCONCLUSIVE` is returned |
+| **#5 Transparency** (every action logged) | All nodes produce audit log events at every decision point; all API failures logged before `INCONCLUSIVE` is returned |
 
 ---
 
@@ -418,42 +373,20 @@ Duplicate `(well_name, operator)` pairs generate a warning and the second occurr
 | File | What it covers |
 |---|---|
 | `tests/orchestrator/test_nodes.py` | All node functions and routing functions, in isolation |
-| `tests/orchestrator/test_graph.py` | `QCAgentGraph` construction, node wiring, absence of deprecated browser nodes |
+| `tests/orchestrator/test_graph.py` | `QCAgentGraph` construction, node wiring |
 | `tests/orchestrator/test_csv_parser.py` | All `parse_csv` scenarios |
-| `tests/orchestrator/test_state.py` | State schema validation |
 
 ### What is mocked
 
-- `AuditLogger`: replaced with `MagicMock()` with a `.log` method; assertions verify which events were emitted and with what arguments.
-- `RuleEngine`: `.evaluate()` returns a fixed `CheckResult(status=CheckStatus.YES)` unless a specific test overrides it.
+- `AuditLogger`: replaced with `MagicMock()` with a `.log` method.
+- `RuleEngine`: `.evaluate()` returns a fixed `CheckResult(status=CheckStatus.YES)` unless overridden.
 - `APIClient`: `AsyncMock()` with individual endpoint methods stubbed per test.
 - `resource_cache`: passed as a real dict so cache hit/miss behavior is exercised.
-- `RateLimiter`, `APIAuth`: patched at construction in `test_graph.py` to avoid singleton and network side effects.
-
-### Key test patterns
-
-- **Routing functions** are tested with plain dicts, no mocks needed (e.g., `route_after_select_well({"well_found": True}) == "process_check"`).
-- **Check queue ordering** uses `tmp_path` YAML fixtures to verify that WITSML is first, dependencies come after non-dependency checks, and `requires_extractor=false` checks precede `requires_extractor=true` checks.
-- **API resolution** verifies that a miss (no matching name) and an API exception both produce `well_found=False`, add the well to `unreachable_wells`, and log the appropriate event.
-- **Cache hit** is tested by pre-populating `resource_cache` and verifying that `mock_api` methods are not called.
-- **Browser node absence** is explicitly tested in `test_graph.py` (`test_graph_browser_nodes_not_present`) to guard against regression.
-
-### Coverage gaps
-
-- `generate_report_node` and `publish_results_node` are tested via integration tests in `tests/reporter/`, not in the orchestrator test suite directly. The orchestrator tests mock the reporter layer.
-- The `run_all()` multi-operator loop has no dedicated unit test; it is covered by the operator-level integration test.
-- The `--checks` dependency auto-inclusion has unit tests for the `_filter_check_queue` function but is not tested end-to-end through the full graph.
+- `RateLimiter`, `APIAuth`: patched at construction in `test_graph.py`.
 
 ### How to run
 
 ```bash
-# All orchestrator tests
 python -m pytest tests/orchestrator/ -v
-
-# Specific test files
-python -m pytest tests/orchestrator/test_nodes.py -v
-python -m pytest tests/orchestrator/test_csv_parser.py -v
-
-# Full suite
 python -m pytest tests/ -v
 ```

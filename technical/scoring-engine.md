@@ -7,7 +7,7 @@ nav_order: 5
 
 # Scoring Engine
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-16*
 
 The scoring engine converts per-check evaluation results into a single 0-100 QC score for each well, then aggregates those well scores into an operator-level score. It is the authoritative implementation of the scoring method described in [Scoring](../scoring). All score computation happens in `src/reporter/score_calculator.py`.
 
@@ -23,7 +23,7 @@ The module is deliberately pure computation: no I/O, no API calls, no browser in
 
 ## How It Fits
 
-The scoring engine sits between the rule engine output and the reporter output layer.
+The scoring engine sits between the rule engine output and the reporter output layer. For the overall system design, see [Architecture](architecture). For the non-technical scoring description, see [Scoring](../scoring).
 
 ```mermaid
 flowchart TD
@@ -164,16 +164,16 @@ The operator total is a simple (unweighted) average of well scores, not a re-app
 def load_scoring_config(config_path: str = "config/scoring.yaml") -> dict:
 ```
 
-Loads and validates the scoring configuration from YAML. Returns the `categories` dict: `{category_name: {"weight": int, "checks": list[str]}}`.
+Loads and validates the scoring configuration from YAML. Returns the full config dict, shaped as `{"active": {category_name: {"weight": int, "checks": list[str]}}, "historical": {...}}`.
 
 **Parameters:**
 - `config_path`: Path to the scoring YAML file. Defaults to `config/scoring.yaml`.
 
-**Returns:** Dict of category configurations, ready to pass to `compute_well_score`.
+**Returns:** Dict with `"active"` and `"historical"` sub-keys. Pass this dict directly to `compute_well_score` -- do not select a sub-key before passing.
 
 **Raises:**
 - `FileNotFoundError`: If the config file does not exist at the given path.
-- `ValueError`: If the config is missing the `categories` key, any category is missing a `weight` or `checks` key, a weight is not a positive integer, or a check name appears in more than one category.
+- `ValueError`: If the config is missing the `categories` key, either `active` or `historical` sub-key is absent, any category is missing a `weight` or `checks` key, a weight is not a positive integer, or a check name appears in more than one category within a mode block.
 
 **When to call:** Once per run in the orchestrator, before processing wells. The result is passed to `compute_well_score` for each well. Do not re-read the file per well.
 
@@ -186,6 +186,7 @@ def compute_well_score(
     well_name: str,
     check_results: dict[str, dict],
     scoring_config: dict,
+    run_mode: str = "active",
 ) -> WellScore:
 ```
 
@@ -194,13 +195,14 @@ Computes the QC score for a single well using two-step weighted scoring.
 **Parameters:**
 - `well_name`: String identifier for the well. Used for labeling only; no lookup performed.
 - `check_results`: Dict of `{check_name: {"status": str, ...}}`. The `"status"` key must be a valid `CheckStatus` value string. Additional keys in each result dict are ignored.
-- `scoring_config`: The `categories` dict returned by `load_scoring_config`. Not re-read from disk inside this function.
+- `scoring_config`: The full config dict returned by `load_scoring_config`, shaped as `{"active": {...}, "historical": {...}}`. Not re-read from disk inside this function.
+- `run_mode`: Which weight block to select. `"active"` (default) uses all 7 categories. `"historical"` uses the 3-category historical block. Any other value raises `ValueError`.
 
-**Returns:** `WellScore` with `total_score` rounded to 4 decimal places, per-category breakdown, and status tallies.
+**Returns:** `WellScore` with `total_score` rounded to 4 decimal places, per-category breakdown, and status tallies. Active runs populate `category_scores` with 7 keys; historical runs populate 3 keys.
 
-**Errors:** Raises `ValueError` (from `CheckStatus(result["status"])`) if any status string is not a valid `CheckStatus` value. All other failures propagate as exceptions; there are no silent fallbacks inside this function.
+**Errors:** Raises `ValueError` on an unrecognized `run_mode`, or from `CheckStatus(result["status"])` if any status string is not a valid `CheckStatus` value. All other failures propagate as exceptions; there are no silent fallbacks inside this function.
 
-**When to call:** Once per well, after the rule engine has produced all check results for that well. Called in `orchestrator/nodes.py` inside `generate_report_node`.
+**When to call:** Once per well, after the rule engine has produced all check results for that well. Called in `orchestrator/nodes.py` inside `generate_report_node` and `publish_supabase_node`.
 
 ---
 
@@ -296,7 +298,9 @@ Per-category operator averages are computed the same way, excluding wells where 
 
 ## config/scoring.yaml Reference
 
-The config file is at `config/scoring.yaml`. The `scoring_method` field documents the algorithm name (`weighted_category_average_v1`). The `categories` dict is the source of truth for scoring.
+The config file is at `config/scoring.yaml`. The `scoring_method` field documents the algorithm name (`weighted_category_average_v1`). The `categories` key contains two sub-keys: `active` and `historical`.
+
+### Active mode (7 categories, 29 checks)
 
 | Category | Weight | Checks |
 |---|---|---|
@@ -308,9 +312,23 @@ The config file is at `config/scoring.yaml`. The `scoring_method` field document
 | Tool Inventory and Tracking | 2 | Rig Inventory Data, Tool Catalog Data |
 | File Drive | 1 | File Drive - BHAs, File Drive - Well Plans, File Drive - Drill Prog, File Drive - Mud Reports |
 
-Total weights sum to 22. Total checks sum to 29.
+Active weights sum to 22. Total checks: 29.
 
-**Check names in this file must match the `check_name` field in each `config/modules/*.yaml` exactly.** `load_scoring_config` validates that no check name appears in more than one category, but does not validate that check names match the modules directory. Mismatches produce missing checks in results (logged as skipped, not raised as errors).
+### Historical mode (3 categories, 13 checks)
+
+Used when `run_mode="historical"` (completed wells). Live-data-only checks (WITSML, Geosteering, NPT, Cost Analysis), tool inventory checks, and file drive checks are excluded. Check 30 (Location) is included only in this mode.
+
+| Category | Weight | Checks |
+|---|---|---|
+| BHA | 5 | BHA Distro, BHA - Comments, BHA - Uploads, BHA - Failure Reports, BHA - Full Components, Post Run BHAs |
+| Trajectory and AC | 5 | Surveys, EDM Files, Well Plans, Location |
+| Supporting Data | 3 | Mud Report Distro, Formation Tops, Wellbore Diagrams |
+
+Historical weights sum to 13. Total checks: 13.
+
+**Check names in both blocks must match the `check_name` field in each `config/modules/*.yaml` exactly.** `load_scoring_config` validates that no check name appears in more than one category within a given mode block, but does not validate that check names match the modules directory. Mismatches produce missing checks in results (logged as skipped, not raised as errors).
+
+**Historical YAML variants:** Some checks have `_historical.yaml` config variants in `config/modules/` that define different evaluation logic for completed wells. The rule engine automatically skips `_historical.yaml` files on active runs and loads them only when `run_mode="historical"` is passed to `_build_check_queue`.
 
 ---
 

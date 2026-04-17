@@ -6,9 +6,9 @@ nav_order: 1
 
 # QC Automation Agent
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-16*
 
-The QC Automation Agent is a software system that automatically inspects drilling data quality across an entire portfolio of active wells. It checks 29 data modules for every well, computes weighted quality scores by operator, and publishes the results to a centralized tracking board. The agent replaces a manual inspection process that was time-consuming, inconsistent, and limited in how often it could run.
+The QC Automation Agent is a software system that automatically inspects drilling data quality across an entire portfolio of active and completed wells. It discovers wells directly from the platform, checks up to 29 data modules per well, computes weighted quality scores by operator, and publishes the results to a centralized tracking board. The agent replaces a manual inspection process that was time-consuming, inconsistent, and limited in how often it could run.
 
 ---
 
@@ -26,13 +26,13 @@ The manual approach had three fundamental limitations:
 
 ## What the Agent Does
 
-The agent performs the same 29 inspections, but it does so programmatically. It reads a list of wells from an input file, authenticates with the cloud platform, retrieves data from each module through the platform's API, evaluates the data against a fixed set of rules, and publishes scores to a Monday.com board where account managers and leadership can review them.
+The agent performs the same 29 inspections, but it does so programmatically. It queries the platform to discover active wells automatically, authenticates with the cloud platform, retrieves data from each module through the platform's API, evaluates the data against a fixed set of rules, and publishes scores to a Monday.com board where account managers and leadership can review them. A separate historical mode evaluates completed wells using a tailored 13-check set.
 
 Every check produces a clear result -- **YES** (data is present and correct), **NO** (data is missing or incorrect), **PARTIAL** (partially complete), **N/A** (not applicable to this well), or **INCONCLUSIVE** (the agent could not determine the answer). The same data always produces the same result.
 
 ```mermaid
 flowchart LR
-    A["Well List\n(CSV Input)"] --> B["Authenticate\n& Connect"]
+    A["Discover\nActive Wells"] --> B["Authenticate\n& Connect"]
     B --> C["Inspect\n29 Modules"]
     C --> D["Score\nby Category"]
     D --> E["Publish to\nQC Board"]
@@ -55,8 +55,9 @@ flowchart LR
 | See the impact numbers | [Results & Impact](results) |
 | Check the project roadmap | [Roadmap](roadmap) |
 | Look up a term | [Glossary](glossary) |
+| See past QC trends | [QC Trend Board](trend-board) |
 
 ---
 
 {: .note }
-This wiki covers the Program Guide (what the agent does and why it matters). A Technical Reference section covering architecture, code modules, and API details for technical contributors is under development and will appear in the sidebar when available.
+This wiki covers the Program Guide (what the agent does and why it matters). For technical contributors, a [Technical Reference](technical/) section covers architecture, code modules, and API details.

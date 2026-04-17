@@ -7,7 +7,7 @@ nav_order: 1
 
 # API Layer
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-04-16*
 
 The API layer is the data retrieval engine for the QC Automation Agent. It is responsible for authenticating with the AI Driller Cloud platform, fetching well data across 25 endpoints, and translating raw JSON responses into the flat dictionaries the rule engine expects. For a non-technical explanation of what data the agent collects and why, see the [How It Works](../how-it-works) guide.
 
@@ -194,12 +194,14 @@ The PLATFORM rate limit bucket was removed in v0.8.0. Concurrent API access is n
 
 **Endpoint Methods -- Complete Reference**
 
-All methods are `async`, accept `uuid: str` unless noted, and return `dict`. All raise `httpx.HTTPStatusError` on non-recoverable HTTP errors and `httpx.RequestError` on network failure after retries.
+All methods are `async`, accept `uuid: str` unless noted, and return `dict` or `list`. All raise `httpx.HTTPStatusError` on non-recoverable HTTP errors and `httpx.RequestError` on network failure after retries.
 
 | Method | HTTP | Data returned | Notes |
 |--------|------|--------------|-------|
-| `get_well_search()` | POST | Global well list | Returns the full portfolio (~17k wells). Read-only POST. No args. |
-| `get_well_detail(uuid)` | GET | Well metadata | Returns `end_depth`, `well_tz`, realtime flag |
+| `search_wells(operator_id, status_ids, state_ids=None)` | POST | List of well dicts | v0.9.0 discovery method. Returns wells matching operator + status filter. Replaces `get_well_search()` for operator discovery. |
+| `search_wells_count(operator_id, status_ids, state_ids=None)` | POST | Integer | Pre-flight count. Uses same filter body as `search_wells()`. Returns a plain integer (not envelope-wrapped). |
+| `get_well_search()` | POST | Global well list | Legacy global search (~17k wells). No longer used in the main discovery path; retained for ad-hoc `--well` UUID resolution. Read-only POST. No args. |
+| `get_well_detail(uuid)` | GET | Well metadata | Returns `end_depth`, `well_tz`, realtime flag, `status_id`, `api_uwi`, `end_date` |
 | `get_bha_list(uuid)` | GET | BHA list for a well | Shared by checks 10, 11, 12, 13, 14, 15 |
 | `get_bha_details(uuid, bha_id)` | GET | Full BHA component data | Returns components with grade_out; two args |
 | `get_bha_files(bha_id)` | GET | File list for a BHA | Takes `bha_id` only, not `uuid` |
@@ -277,6 +279,7 @@ All adapter functions are pure functions. Every function takes one or two dicts 
 | `adapt_bha_uploads(bha_list_response, bha_files_list)` | 12 | `(dict, list[dict]) -> dict` | `{"bha_upload_counts": list[int] \| None}` | Standalone version of the upload count logic from `adapt_bha_drawer_data`. Used when check 12 is run without check 11. |
 | `adapt_wellbore_designs(api_response)` | 22 | `dict -> dict` | `{"data_present": bool \| None, "design_types": list[str]}` | Uses `design_type` field (not `variantType`). Enum has `_PLAN` suffix (e.g., `"PROTOTYPE_PLAN"`). Maps any value starting with `"PRINCIPAL"` to `"Definitive"` via `startswith`, not exact match. |
 | `adapt_file_drive(api_response, folder_name)` | 26, 27, 28, 29 | `(dict, str) -> dict` | `{"folder_has_files": bool \| None}` | Takes `folder_name` as a second arg (from YAML `extraction.params`). Walks a 2-level tree. Uses `modified_at is not None` as the file-presence signal (no file-level children in the tree response). Returns `None` (INCONCLUSIVE) if the folder is not found. |
+| `adapt_location(api_response)` | 30 | `dict -> dict` | `{"geo_latitude": float \| None, "geo_longitude": float \| None}` | Historical mode only (Check 30). Response has a doubly-nested envelope: `{"data": {"data": {geo_latitude, geo_longitude}}}`. Returns `None` for both fields if either envelope is absent, producing `INCONCLUSIVE`. An epsilon zero-guard in the eval function (`evaluate_location`) prevents (0.0, 0.0) from passing as a valid coordinate. |
 
 ---
 

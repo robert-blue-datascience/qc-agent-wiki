@@ -6,9 +6,25 @@ nav_order: 11
 
 # Version History
 
-*Last updated: 2026-04-14*
+*Last updated: 2026-04-16*
 
-This page summarizes the major milestones for each release of the QC Automation Agent. Releases are listed in reverse chronological order. For a forward-looking view of what is coming next, see the [Roadmap](roadmap.md).
+This page summarizes the major milestones for each release of the QC Automation Agent. Releases are listed in reverse chronological order. For a forward-looking view of what is coming next, see the [Roadmap](roadmap).
+
+---
+
+## v0.9.0 -- April 16, 2026
+
+**Theme: API-driven well discovery, Supabase integration, and historical mode**
+
+The largest release since the API migration. Replaced the manually maintained well list with fully automatic discovery: the agent now queries the platform directly to find active wells for each operator, with no spreadsheet required. Added Supabase as the score of record -- per-well check results, metadata, and scores are written to a persistent database after every well is processed.
+
+Introduced historical run mode for evaluating completed wells. A separate set of 13 checks covers the data that remains relevant after a well has finished drilling, organized into three scoring categories (BHA, Trajectory and Anti-Collision, and Supporting Data). A new location check (Check 30) verifies surface coordinates and is included in historical runs only.
+
+Simplified the Monday.com publishing pipeline. The QC tracking board now shows one summary row per operator (score, well count, last run date, dashboard link) rather than individual per-check columns. The summary board is updated after every active operator run.
+
+Fixed two production bugs discovered during the first smoke test: an audit log that was silently dropped on single-operator runs, and a column value encoding error that caused Monday.com to reject date and link updates.
+
+899 tests passing.
 
 ---
 
@@ -90,7 +106,7 @@ Built the LangGraph state machine that coordinates the full run: loading the wel
 
 Implemented deterministic evaluation logic for all 29 QC checks. Each check has a YAML configuration that defines its inputs, dependencies, and scoring behavior. Check results use a seven-value status system (YES, NO, PARTIAL, N_A, INCONCLUSIVE, YES_EMAIL, YES_WITSML) with defined score weights. Added the browser navigator for page-level navigation, the audit logger for structured event logging, and the log sanitizer that scrubs credentials from all log output before it reaches disk.
 
-For a description of what each check evaluates, see [The 29 Checks](checks.md).
+For a description of what each check evaluates, see [The 29 Checks](checks).
 
 ---
 
@@ -110,4 +126,4 @@ Initial project structure, security gate (startup policy verification), token bu
 
 ---
 
-*For what is coming next, see the [Roadmap](roadmap.md). For definitions of terms used on this page, see the [Glossary](glossary.md).*
+*For what is coming next, see the [Roadmap](roadmap). For definitions of terms used on this page, see the [Glossary](glossary).*

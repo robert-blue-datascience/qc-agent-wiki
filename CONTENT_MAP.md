@@ -92,9 +92,9 @@ Tracks which pages exist and are current. Updated by wiki-sweep.
 
 | File | Status | Last Updated |
 |---|---|---|
-| index.md | Exists | 2026-04-07 |
-| background.md | Exists | 2026-04-07 |
-| how-it-works.md | Exists | 2026-04-07 |
+| index.md | Exists | 2026-04-16 |
+| background.md | Exists | 2026-04-16 |
+| how-it-works.md | Exists | 2026-04-16 |
 | checks.md | Exists | 2026-04-07 |
 | checks/bha.md | Exists | 2026-04-07 |
 | checks/trajectory.md | Exists | 2026-04-07 |
@@ -103,18 +103,18 @@ Tracks which pages exist and are current. Updated by wiki-sweep.
 | checks/engineering.md | Exists | 2026-04-07 |
 | checks/tool-inventory.md | Exists | 2026-04-07 |
 | checks/file-drive.md | Exists | 2026-04-07 |
-| scoring.md | Exists | 2026-04-07 |
-| results.md | Exists | 2026-04-13 |
+| scoring.md | Exists | 2026-04-16 |
+| results.md | Exists | 2026-04-16 |
 | trend-board.md | Exists (placeholder) | 2026-04-07 |
 | roadmap.md | Exists | 2026-04-13 |
 | glossary.md | Exists | 2026-04-10 |
-| technical/index.md | Exists | 2026-04-07 |
+| technical/index.md | Exists | 2026-04-16 |
 | technical/architecture.md | Exists | 2026-04-07 |
 | technical/api-layer.md | Exists | 2026-04-10 |
 | technical/rule-engine.md | Exists | 2026-04-07 |
-| technical/orchestrator.md | Exists | 2026-04-10 |
+| technical/orchestrator.md | Exists | 2026-04-16 |
 | technical/scoring-engine.md | Exists | 2026-04-07 |
-| technical/monday-integration.md | Exists | 2026-04-10 |
+| technical/monday-integration.md | Exists | 2026-04-16 |
 | guardrails.md | Exists | 2026-04-12 |
 | technical/guardrails.md | Exists | 2026-04-12 |
-| version-history.md | Exists | 2026-04-14 |
+| version-history.md | Exists | 2026-04-16 |

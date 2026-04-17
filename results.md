@@ -6,9 +6,9 @@ nav_order: 6
 
 # Results & Impact
 
-*Last updated: 2026-04-13*
+*Last updated: 2026-04-16*
 
-This page compares the manual QC process to the automated agent, showing the concrete process improvements the automation delivers.
+This page compares the manual QC process to the automated agent, showing the concrete process improvements the automation delivers. For background on why the agent was built, see [Background](background). For how scores are calculated, see [Scoring](scoring). For what is coming next, see the [Roadmap](roadmap).
 
 ---
 
@@ -109,13 +109,23 @@ The agent checks every well in the input file for every one of the 29 modules. T
 
 ---
 
+## v0.9.0 -- April 16, 2026
+
+Version 0.9.0 delivered two capabilities that extend what the agent can do:
+
+**Automated well discovery.** The manually maintained input spreadsheet has been replaced entirely. The agent now queries the platform directly to find active wells for each operator, removing the risk of missed rigs and the overhead of list maintenance.
+
+**Historical well evaluation.** The agent can now run a separate historical mode against completed wells, using 13 checks tailored to data that remains relevant after drilling has finished. Results are written to the same database as active-well runs, enabling cross-operator comparison across both active and completed portfolios.
+
+**Supabase as score of record.** Per-well results are now written to a persistent database immediately after each well is evaluated. The Monday.com board retains a summary row per operator, but the authoritative record lives in the database.
+
 ## What Comes Next for Scale
 
-With per-well time now in the one-second range, the bottleneck has shifted from execution speed to data availability and scope. Two areas are on the near-term roadmap:
+With automated discovery and a persistent database in place, the focus shifts to broadening coverage and deepening insight:
 
-**Automated well discovery.** The current workflow requires a manually maintained input file of active wells. Version 0.9.0 will replace that file with an API-driven discovery process: the agent queries the platform directly to find all active wells for each operator, removing the need for manual list maintenance and reducing the risk of missing newly-added rigs.
+**Full historical inventory.** The platform contains thousands of wells spanning years of drilling history. The agent's execution speed and historical mode make it feasible to evaluate the full inventory -- a task that was previously impossible at any practical frequency.
 
-**Historical well coverage.** The platform contains approximately 15,600 wells in its database, spanning years of drilling history. The agent's execution speed now makes it feasible to run QC checks across the full historical inventory -- a task that was previously impossible at any practical frequency.
+**Trend analysis.** With per-well scores accumulating in the database over time, the foundation exists for tracking score trends by operator, basin, and check category across runs.
 
 ---
 

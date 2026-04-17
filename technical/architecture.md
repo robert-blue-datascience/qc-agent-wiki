@@ -7,62 +7,68 @@ nav_order: 2
 
 # System Architecture
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-16*
 
-This module documents the QC Automation Agent's four-layer architecture, the API migration strategy, and the security posture. For a non-technical overview of how the agent works, see the [How It Works](../how-it-works) guide.
+This module documents the QC Automation Agent's architecture, the API migration strategy, and the security posture. For a non-technical overview of how the agent works, see the [How It Works](../how-it-works) guide. For the full API layer reference (endpoint methods, adapter functions, auth lifecycle), see [API Layer](api-layer).
 
 ---
 
 ## The Four-Layer Model
 
-The QC Agent operates on a highly decoupled four-layer architecture. This separation of concerns allows the agent to securely manage state, extract data at high speeds via direct API calls, and evaluate business rules deterministically.
+The QC Agent operates on a highly decoupled four-layer architecture. This separation of concerns allows the agent to securely manage state, extract data at high speeds via direct API calls, and evaluate business rules deterministically. For a non-technical description of this flow, see [How It Works](../how-it-works).
 
 ### 1. The Orchestrator Layer (LangGraph)
 
-The Orchestrator acts as the "Brain" of the application. Built on LangGraph, it manages the control flow and execution queue for the 29 QC checks.
+The Orchestrator acts as the control center of the application. Built on LangGraph, it manages the control flow and execution queue for up to 29 QC checks per well.
 
-* **State Management:** The orchestrator maintains the `QCAgentState`, a typed dictionary that holds the current well context, the queue of pending checks, and the accumulation of results.
-* **Resource Caching:** To satisfy strict data isolation policies, the Orchestrator maintains a `resource_cache` (e.g., storing a fetched BHA list so subsequent BHA checks do not trigger redundant network calls). **Crucially, this cache is wiped clean between every well evaluation** to prevent cross-well data contamination.
-* **Routing:** The Orchestrator evaluates the `API_STRATEGY_MAP` to dispatch each check to the correct API fetch function and adapter. All 29 checks are covered; a missing strategy entry returns `INCONCLUSIVE` for that check rather than aborting the run.
+* **Well Discovery:** In v0.9.0+, `discover_wells_node` queries the platform search API using an operator whitelist to build the well queue automatically. No CSV input file is required. A count pre-flight checks against a discovery ceiling before the full search runs.
+* **State Management:** The orchestrator maintains `QCAgentState`, a typed dictionary that holds the current well context, the queue of pending checks, and the accumulation of results.
+* **Resource Caching:** The Orchestrator maintains a `resource_cache` dict (e.g., storing a fetched BHA list so subsequent BHA checks do not trigger redundant network calls). **This cache is cleared between every well evaluation** to prevent cross-well data contamination (Non-Negotiable #1).
+* **Routing:** The Orchestrator evaluates the `API_STRATEGY_MAP` to dispatch each check to the correct API fetch function and adapter. All 30 checks are covered; a missing strategy entry returns `INCONCLUSIVE` for that check rather than aborting the run.
+* **Historical Mode:** `run_mode="historical"` switches the check queue to a 13-check set with `_historical.yaml` YAML variants for checks that evaluate completed wells differently. The scoring engine selects the corresponding historical weight block.
 
 ### 2. The API Extraction Layer (httpx)
 
-The API Layer is the primary data harvesting engine, replacing legacy DOM scraping.
+The API Layer is the primary data harvesting engine.
 
 * **Connection Pooling:** The `APIClient` is instantiated and managed via an asynchronous context manager (`async with self._api_client:`). This keeps the underlying TCP connections open for the duration of a run, significantly reducing latency across hundreds of endpoint calls.
-* **Rate Limiting:** All API requests pass through a centralized rate limiter. The system utilizes a `PLATFORM` bucket with a hard **300ms floor**. This ensures that even during rapid parent-child iterations (e.g., fetching 5 BHA details sequentially), the agent remains a "good citizen" and avoids triggering platform API throttling.
+* **Operator Discovery:** Two search methods (`search_wells`, `search_wells_count`) support operator-scoped discovery with status and geographic filters. These replace the legacy global well-search approach.
+* **Concurrent Access:** The PLATFORM rate limit bucket was removed in v0.8.0. Concurrent API access is controlled by a semaphore (`semaphore_size`) in the orchestrator. The rate limiter's retry backoff (`backoff_seconds`) is still used for 5xx recovery.
 
 ### 3. The Browser Layer (Removed -- v0.7.0)
 
-The Browser Layer (Playwright) was removed in v0.7.0 after the API migration completed on 2026-04-07. Prior to v0.6.0, the agent relied entirely on DOM scraping via Playwright. A hybrid "API-First, Browser-Fallback" model was used during v0.6.x while adapters were being written. Once all 29 checks had API coverage, the browser nodes (`launch_browser_node`, `login_node`), browser state fields, and the `BrowserNavigator` / `BrowserExtractor` call paths were removed from the orchestrator entirely.
+The Browser Layer (Playwright) was removed in v0.7.0 after the API migration completed. Prior to v0.6.0, the agent relied entirely on DOM scraping. A hybrid API-first, browser-fallback model was used during v0.6.x while adapters were being written. Once all 29 checks had API coverage, the browser nodes, browser state fields, and all Playwright call paths were removed.
 
 API failures are now handled per-check: a failed fetch returns `INCONCLUSIVE` for that check and the run continues. There is no run-aborting crash path equivalent to the old `browser_dead` flag.
 
 ### 4. The Rule Engine
 
-The Rule Engine is immutable. It does not know (or care) whether data came from the API or the Browser. It receives a flat Python dictionary, applies strict business logic, and outputs a standard score (`YES`, `NO`, `N_A`, or `INCONCLUSIVE`).
+The Rule Engine is immutable. It does not know whether data came from the API or any other source. It receives a flat Python dictionary, applies strict business logic, and outputs a standard status (`YES`, `NO`, `PARTIAL`, `N_A`, or `INCONCLUSIVE`). Historical-mode checks reuse existing eval functions; variant behavior is controlled by `extracted_data` fields injected by the orchestrator before calling the engine.
+
+### 5. The Reporter Layer (Supabase + Monday.com)
+
+After all wells for an operator are processed, two publish nodes run:
+
+* **`publish_supabase_node`:** Writes per-well results to the `well_results` table in Supabase (PostgREST HTTP client in `src/reporter/supabase_client.py`). This is the score-of-record. Epoch ms timestamps from the API are converted to ISO 8601 at the boundary via `_epoch_ms_to_iso()`. Runs on every operator invocation regardless of `--no-publish`; skipped only if credentials are absent.
+* **`publish_monday_node`:** Upserts a single operator-level summary row (score, well count, last run date, dashboard link) to the Monday.com summary board. Skipped for historical runs, ad-hoc `--well` invocations, `--no-publish` flag, missing API token, or missing board config.
 
 ---
 
-## The Run-Level Callback Cache
+## Well Discovery and the resource_cache
 
-One of the most significant performance optimizations in the Orchestrator is the **Run-Level Callback Cache**.
+### Well Discovery (v0.9.0+)
 
-### The Problem
+Well discovery is now handled by `discover_wells_node` using a targeted operator search rather than a global well list. The node calls `search_wells_count` (pre-flight) and then `search_wells` with the operator UUID, status ID list, and optional state IDs from `config/operator_whitelist.yaml`. This builds a `well_queue` containing only the wells relevant to the current operator run.
 
-To evaluate a specific well, the agent must resolve its name to a UUID via the platform's well search endpoint. This endpoint returns the full global well list. Fetching this for every single well in a 111-well manifest would result in severe bandwidth waste and unnecessary time penalties.
+The legacy global well search (`get_well_search()`, which fetched the full ~17k well portfolio) is no longer used in the primary discovery path. It is retained in `APIClient` for ad-hoc `--well <uuid>` runs where only a single well UUID is known and no operator context is available.
 
-### The Callback Solution
+### The resource_cache Pattern
 
-We cannot store the global well list in the standard `QCAgentState` or the `resource_cache` because the orchestrator strictly wipes state between wells.
+Within a single well, many checks share API endpoints. `get_bha_list`, for example, is needed by checks 10, 11, 12, 13, 14, and 15. The `resource_cache` dict (held on `QCAgentGraph`, not in `QCAgentState`) stores responses for the current well so each endpoint is fetched only once regardless of how many checks request it.
 
-Instead, we use a **Callback Pattern**:
-1. The `QCAgentGraph` instance initializes a persistent `self._well_search_cache` attribute.
-2. When the wrapper function invokes the `select_well_node`, it passes this cache and a setter callback down into the node.
-3. On the first well evaluation, the node hits the API, fetches the 17k+ wells, and triggers the callback to store the list on the Graph instance.
-4. For the remaining 110 wells, the node detects the populated cache and resolves the UUID locally in milliseconds.
+**Critical:** `save_well_results_node` calls `resource_cache.clear()` at the end of every well. This enforces Non-Negotiable #1 (no cross-well data contamination). The `is not None` check pattern is used throughout (not `or {}`) to distinguish a cache miss from a cache hit on an empty response.
 
-This pattern successfully prevents LangGraph state pollution while entirely eliminating redundant heavy network calls.
+The `_FETCH_FAILED` sentinel (a module-level object, not `None`) is stored in the cache when an API fetch fails. This distinguishes "fetch failed" from "not yet fetched," preventing a failed fetch from triggering redundant retry calls in the same wave.
 
 ---
 

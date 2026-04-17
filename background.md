@@ -6,7 +6,7 @@ nav_order: 2
 
 # Background
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-16*
 
 The QC Automation Agent grew out of a real operational need: the manual quality control process for drilling data could not keep pace with the size of the portfolio it was responsible for. This page describes how that process worked, what its limitations were, and how the agent evolved into its current form.
 
@@ -54,6 +54,12 @@ The migration preserved all existing evaluation logic. A translation layer was b
 
 ## Where Things Stand Today
 
-The agent is in the final stages of its transition from browser-based inspection to direct API communication. All 29 evaluation rules, the scoring system, and the Monday.com publishing pipeline are operational. The data retrieval layer has been largely migrated to the API, with final integration and wiring work in progress.
+The agent is fully operational on the direct API path. The browser automation layer was retired in April 2026 after all 29 checks were successfully migrated. A full portfolio run now completes in under three minutes, compared to the 6 to 7 hours the manual process required.
 
-The current focus is completing this migration and executing the first clean full-portfolio run through the new API pathway. The browser automation layer remains available as a fallback during the transition.
+Well discovery is now entirely automatic. There is no longer a manually maintained input file. The agent consults an operator whitelist, queries the platform for all active wells matching each operator's configured criteria, and builds its inspection queue without any manual input.
+
+Results are stored in two places. Per-well check results are written to a database (the score of record) immediately after each well is processed. A summary row for each operator -- showing the overall score, well count, and last run date -- is published to the QC tracking board after each operator's wells are complete.
+
+The agent also supports a historical run mode for evaluating completed wells. Because completed wells have no live data streams, this mode uses a tailored set of 13 checks covering the data that remains relevant after drilling has finished.
+
+See [How It Works](how-it-works) for a step-by-step walkthrough of the current run sequence, and [Results & Impact](results) for performance benchmarks.
